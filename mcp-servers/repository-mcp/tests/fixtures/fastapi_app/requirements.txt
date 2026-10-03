@@ -1,0 +1,3 @@
+fastapi==0.110.0
+# comment only
+-r requirements-dev.txt

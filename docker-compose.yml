@@ -1,0 +1,114 @@
+services:
+  repository-mcp:
+    build:
+      context: .
+      dockerfile: mcp-servers/repository-mcp/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      WORKSPACE_ROOT: /workspaces
+      HOST: 0.0.0.0
+      PORT: "8000"
+      MAX_READ_LINES: ${MAX_READ_LINES:-200}
+      MAX_FILE_BYTES: ${MAX_FILE_BYTES:-1048576}
+      MAX_SEARCH_HITS: ${MAX_SEARCH_HITS:-50}
+      MAX_DIRECTORY_ENTRIES: ${MAX_DIRECTORY_ENTRIES:-200}
+      CLONE_TIMEOUT_SECONDS: ${CLONE_TIMEOUT_SECONDS:-60}
+      TOOL_TIMEOUT_SECONDS: ${TOOL_TIMEOUT_SECONDS:-30}
+      MAX_PYTHON_FILES: ${MAX_PYTHON_FILES:-200}
+      MAX_SYMBOLS: ${MAX_SYMBOLS:-500}
+      MAX_REFERENCES: ${MAX_REFERENCES:-50}
+      INDEX_TIMEOUT_SECONDS: ${INDEX_TIMEOUT_SECONDS:-30}
+      GIT_CLONE_DEPTH: ${GIT_CLONE_DEPTH:-50}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    volumes:
+      - workspaces:/workspaces
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+
+  git-mcp:
+    build:
+      context: .
+      dockerfile: mcp-servers/git-mcp/Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      WORKSPACE_ROOT: /workspaces
+      HOST: 0.0.0.0
+      PORT: "8001"
+      TOOL_TIMEOUT_SECONDS: ${TOOL_TIMEOUT_SECONDS:-30}
+      DEFAULT_PAGE_SIZE: ${DEFAULT_PAGE_SIZE:-20}
+      MAX_PAGE_SIZE: ${MAX_PAGE_SIZE:-50}
+      MAX_DIFF_LINES: ${MAX_DIFF_LINES:-200}
+      MAX_BRANCHES: ${MAX_BRANCHES:-50}
+    volumes:
+      - workspaces:/workspaces:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health')",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+
+  tests:
+    profiles: ["test"]
+    build:
+      context: .
+      dockerfile: mcp-servers/repository-mcp/Dockerfile
+    environment:
+      ALLOW_LOCAL_GIT: "1"
+      WORKSPACE_ROOT: /tmp/test-workspaces
+    command: ["pytest", "-q"]
+
+  git-tests:
+    profiles: ["test-git"]
+    build:
+      context: .
+      dockerfile: mcp-servers/git-mcp/Dockerfile
+    environment:
+      WORKSPACE_ROOT: /tmp/test-workspaces
+    command: ["pytest", "-q"]
+
+  smoke:
+    profiles: ["smoke"]
+    build:
+      context: .
+      dockerfile: mcp-servers/repository-mcp/Dockerfile
+    depends_on:
+      repository-mcp:
+        condition: service_healthy
+      git-mcp:
+        condition: service_healthy
+    environment:
+      SMOKE_BASE_URL: http://repository-mcp:8000
+      GIT_SMOKE_BASE_URL: http://git-mcp:8001
+    command: ["pytest", "-q", "tests/smoke"]
+
+  mcp-inspector:
+    profiles: ["inspect"]
+    build:
+      context: ./mcp-servers/mcp-inspector
+    ports:
+      - "127.0.0.1:6274:6274"
+    depends_on:
+      repository-mcp:
+        condition: service_healthy
+
+volumes:
+  workspaces:
