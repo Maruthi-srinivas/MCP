@@ -16,6 +16,9 @@ def test_live_health():
     git_url = os.environ.get("GIT_SMOKE_BASE_URL", "").strip()
     if git_url:
         _check(git_url)
+    analysis_url = os.environ.get("ANALYSIS_SMOKE_BASE_URL", "").strip()
+    if analysis_url:
+        _check(analysis_url)
 
 
 def _check(base_url: str) -> None:

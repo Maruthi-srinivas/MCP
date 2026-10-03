@@ -88,7 +88,7 @@ Errors look like this:
 }
 ```
 
-Codes in this version: `INVALID_REPOSITORY_URL`, `REPOSITORY_NOT_FOUND`, `CLONE_FAILED`, `INVALID_PATH`, `FILE_NOT_FOUND`, `FILE_TOO_LARGE`, `TOOL_TIMEOUT`, `GITHUB_RATE_LIMIT`, `INTERNAL_ERROR`, `SYMBOL_NOT_FOUND`, `UNSUPPORTED_LANGUAGE`, `GIT_REF_NOT_FOUND`.
+Codes in this version: `INVALID_REPOSITORY_URL`, `REPOSITORY_NOT_FOUND`, `CLONE_FAILED`, `INVALID_PATH`, `FILE_NOT_FOUND`, `FILE_TOO_LARGE`, `TOOL_TIMEOUT`, `GITHUB_RATE_LIMIT`, `INTERNAL_ERROR`, `SYMBOL_NOT_FOUND`, `UNSUPPORTED_LANGUAGE`, `GIT_REF_NOT_FOUND`, `ANALYSIS_TIMEOUT`.
 
 ## Limits
 
@@ -109,6 +109,12 @@ Codes in this version: `INVALID_REPOSITORY_URL`, `REPOSITORY_NOT_FOUND`, `CLONE_
 | `MAX_PAGE_SIZE` | 50 |
 | `MAX_DIFF_LINES` | 200 |
 | `MAX_BRANCHES` | 50 |
+| `ANALYSIS_TIMEOUT` | 30 |
+| `MAX_FUNCTIONS` | 500 |
+| `MAX_CLASSES` | 500 |
+| `MAX_ENDPOINTS` | 200 |
+| `MAX_EDGES` | 500 |
+| `MAX_HINTS` | 200 |
 
 A file larger than `MAX_FILE_BYTES` is refused with `FILE_TOO_LARGE`. A read that asks for more than `MAX_READ_LINES` returns the first allowed lines and `"truncated": true`.
 
@@ -136,6 +142,19 @@ V0.3 adds a second MCP server, `git-mcp`, on port 8001. It answers history quest
 
 The patch is a separate `get_diff` call. `get_diff` includes both resolved SHAs and cuts the patch at `MAX_DIFF_LINES`. Point the inspector at `http://git-mcp:8001/mcp` to call these tools. The `workspaces` volume is mounted read-only on `git-mcp`.
 
+## How detect_api_endpoints moves through the code
+
+V0.4 adds a third MCP server, `analysis-mcp`, on port 8002. It re-parses Python with the standard-library `ast` module. It does not read the V0.2 index, and it does not import the other servers.
+
+1. `detect_api_endpoints` is registered in [mcp-servers/analysis-mcp/src/analysis_mcp/server.py](mcp-servers/analysis-mcp/src/analysis_mcp/server.py). That file only registers the nine analysis tools and adds `GET /health`.
+2. [mcp-servers/analysis-mcp/src/analysis_mcp/tools/detect_api_endpoints.py](mcp-servers/analysis-mcp/src/analysis_mcp/tools/detect_api_endpoints.py) loads the analysis artifact and returns the endpoint list.
+3. [mcp-servers/analysis-mcp/src/analysis_mcp/analysis/endpoints.py](mcp-servers/analysis-mcp/src/analysis_mcp/analysis/endpoints.py) reads FastAPI and Flask decorators, Django `path` / `re_path` calls in `urls.py`, and `@api_view`. The route path is a string literal.
+4. [mcp-servers/analysis-mcp/src/analysis_mcp/analysis/artifact.py](mcp-servers/analysis-mcp/src/analysis_mcp/analysis/artifact.py) writes `/workspaces/<repository_id>.analysis.json` beside the clone when the commit SHA or analyzer version changed. The git checkout is not modified. [shared/investigator_shared/registry.py](shared/investigator_shared/registry.py) reads the same registry Repository MCP writes.
+
+`analyze_code` returns counts and warnings. Functions, the graph, database hints, and HTTP client calls stay on their own tools. A call edge has `inferred: true` because the name matched one function. That is not a runtime trace. A file that fails to parse adds a warning and the rest of the run continues. `ANALYSIS_TIMEOUT` is retryable.
+
+File contents stay on port 8000. History stays on port 8001. This server does not summarize the graph with a model. Point the inspector at `http://analysis-mcp:8002/mcp` to call these tools.
+
 ## Tests
 
 Tests run inside the image. Nothing is installed on the host.
@@ -143,11 +162,12 @@ Tests run inside the image. Nothing is installed on the host.
 ```bash
 docker compose --profile test run --rm tests
 docker compose --profile test-git run --rm git-tests
+docker compose --profile test-analysis run --rm analysis-tests
 ```
 
-Repository tests cover browse, search, and Python structure. Git tests use a three-commit fixture and do not contact GitHub. The running repository server does not set `ALLOW_LOCAL_GIT`, so a non-GitHub URL is rejected.
+Repository tests cover browse, search, and Python structure. Git tests use a three-commit fixture and do not contact GitHub. Analysis tests use a small FastAPI fixture with a database hint, an HTTP client call, and one file that does not parse. The running repository server does not set `ALLOW_LOCAL_GIT`, so a non-GitHub URL is rejected.
 
-After both servers are up, the health smoke test calls them over the Compose network:
+After the three servers are up, the health smoke test calls them over the Compose network:
 
 ```bash
 docker compose --profile smoke run --rm smoke
@@ -155,13 +175,14 @@ docker compose --profile smoke run --rm smoke
 
 ## What this version does not do
 
-A separate Analysis MCP, an agent, resources, prompts, PostgreSQL, Redis, accounts, and a web UI are later versions. JavaScript, TypeScript, Java, and Go are not parsed. git-mcp cannot commit, push, or check out a branch. See [VERSION_ROADMAP.md](VERSION_ROADMAP.md).
+An agent, resources, prompts, PostgreSQL, Redis, accounts, and a web UI are later versions. JavaScript, TypeScript, Java, and Go are not parsed. analysis-mcp does not summarize the graph with a model. git-mcp cannot commit, push, or check out a branch. See [VERSION_ROADMAP.md](VERSION_ROADMAP.md).
 
 ## Logs and shutdown
 
 ```bash
 docker compose logs -f repository-mcp
 docker compose logs -f git-mcp
+docker compose logs -f analysis-mcp
 docker compose down
 ```
 
