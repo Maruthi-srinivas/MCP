@@ -32,6 +32,7 @@ class Settings:
     git_clone_depth: int
     github_token: str | None
     allow_local_git: bool
+    resource_max_chars: int
 
 
 def get_settings() -> Settings:
@@ -54,4 +55,5 @@ def get_settings() -> Settings:
         git_clone_depth=_int_env("GIT_CLONE_DEPTH", 50),
         github_token=token or None,
         allow_local_git=os.environ.get("ALLOW_LOCAL_GIT", "").strip() == "1",
+        resource_max_chars=_int_env("RESOURCE_MAX_CHARS", 8000),
     )

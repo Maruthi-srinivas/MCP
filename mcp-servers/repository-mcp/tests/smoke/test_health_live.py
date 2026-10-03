@@ -19,6 +19,9 @@ def test_live_health():
     analysis_url = os.environ.get("ANALYSIS_SMOKE_BASE_URL", "").strip()
     if analysis_url:
         _check(analysis_url)
+    agent_url = os.environ.get("AGENT_SMOKE_BASE_URL", "").strip()
+    if agent_url:
+        _check(agent_url)
 
 
 def _check(base_url: str) -> None:

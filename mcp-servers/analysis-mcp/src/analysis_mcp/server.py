@@ -11,6 +11,8 @@ from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 
 from analysis_mcp.config import get_settings
+from analysis_mcp.prompts import register as register_prompts
+from analysis_mcp.resources import register as register_resources
 from analysis_mcp.tools.analyze_code import analyze_code
 from analysis_mcp.tools.build_dependency_graph import build_dependency_graph
 from analysis_mcp.tools.detect_api_endpoints import detect_api_endpoints
@@ -43,6 +45,9 @@ mcp.tool()(detect_entrypoints)
 mcp.tool()(detect_api_endpoints)
 mcp.tool()(detect_database_access)
 mcp.tool()(detect_external_services)
+
+register_resources(mcp)
+register_prompts(mcp)
 
 
 async def health(_: Request) -> JSONResponse:

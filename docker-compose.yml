@@ -20,6 +20,7 @@ services:
       MAX_REFERENCES: ${MAX_REFERENCES:-50}
       INDEX_TIMEOUT_SECONDS: ${INDEX_TIMEOUT_SECONDS:-30}
       GIT_CLONE_DEPTH: ${GIT_CLONE_DEPTH:-50}
+      RESOURCE_MAX_CHARS: ${RESOURCE_MAX_CHARS:-8000}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
     volumes:
       - workspaces:/workspaces
@@ -84,6 +85,7 @@ services:
       MAX_ENDPOINTS: ${MAX_ENDPOINTS:-200}
       MAX_EDGES: ${MAX_EDGES:-500}
       MAX_HINTS: ${MAX_HINTS:-200}
+      RESOURCE_MAX_CHARS: ${RESOURCE_MAX_CHARS:-8000}
       DEFAULT_PAGE_SIZE: ${DEFAULT_PAGE_SIZE:-20}
       MAX_PAGE_SIZE: ${MAX_PAGE_SIZE:-50}
     volumes:
@@ -95,6 +97,45 @@ services:
           "python",
           "-c",
           "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health')",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+
+  agent:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    ports:
+      - "8003:8003"
+    environment:
+      HOST: 0.0.0.0
+      PORT: "8003"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      REPOSITORY_MCP_URL: http://repository-mcp:8000/mcp
+      GIT_MCP_URL: http://git-mcp:8001/mcp
+      ANALYSIS_MCP_URL: http://analysis-mcp:8002/mcp
+      MAX_STEPS: ${MAX_STEPS:-8}
+      MAX_TOOL_CALLS: ${MAX_TOOL_CALLS:-12}
+      MAX_TOOL_OUTPUT_CHARS: ${MAX_TOOL_OUTPUT_CHARS:-4000}
+      AGENT_TIMEOUT_SECONDS: ${AGENT_TIMEOUT_SECONDS:-60}
+      MAX_RETRIES: ${MAX_RETRIES:-2}
+    depends_on:
+      repository-mcp:
+        condition: service_healthy
+      git-mcp:
+        condition: service_healthy
+      analysis-mcp:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8003/health')",
         ]
       interval: 5s
       timeout: 3s
@@ -129,6 +170,15 @@ services:
       WORKSPACE_ROOT: /tmp/test-workspaces
     command: ["pytest", "-q"]
 
+  agent-tests:
+    profiles: ["test-agent"]
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    environment:
+      AGENT_TEST_MODEL: scripted
+    command: ["pytest", "-q"]
+
   smoke:
     profiles: ["smoke"]
     build:
@@ -141,10 +191,13 @@ services:
         condition: service_healthy
       analysis-mcp:
         condition: service_healthy
+      agent:
+        condition: service_healthy
     environment:
       SMOKE_BASE_URL: http://repository-mcp:8000
       GIT_SMOKE_BASE_URL: http://git-mcp:8001
       ANALYSIS_SMOKE_BASE_URL: http://analysis-mcp:8002
+      AGENT_SMOKE_BASE_URL: http://agent:8003
     command: ["pytest", "-q", "tests/smoke"]
 
   mcp-inspector:

@@ -11,6 +11,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 
 from git_mcp.config import get_settings
+from git_mcp.prompts import register as register_prompts
 from git_mcp.tools.compare_branches import compare_branches
 from git_mcp.tools.find_introduced_change import find_introduced_change
 from git_mcp.tools.get_branches import get_branches
@@ -40,6 +41,8 @@ mcp.tool()(get_diff)
 mcp.tool()(get_file_history)
 mcp.tool()(compare_branches)
 mcp.tool()(find_introduced_change)
+
+register_prompts(mcp)
 
 
 async def health(_: Request) -> JSONResponse:

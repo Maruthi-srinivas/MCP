@@ -29,6 +29,7 @@ class Settings:
     max_hints: int
     default_page_size: int
     max_page_size: int
+    resource_max_chars: int
 
 
 def get_settings() -> Settings:
@@ -46,6 +47,7 @@ def get_settings() -> Settings:
         max_hints=_int_env("MAX_HINTS", 200),
         default_page_size=_int_env("DEFAULT_PAGE_SIZE", 20),
         max_page_size=_int_env("MAX_PAGE_SIZE", 50),
+        resource_max_chars=_int_env("RESOURCE_MAX_CHARS", 8000),
     )
 
 

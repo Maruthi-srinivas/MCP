@@ -14,6 +14,8 @@ from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 
 from repository_mcp.config import get_settings
+from repository_mcp.prompts import register as register_prompts
+from repository_mcp.resources import register as register_resources
 from repository_mcp.tools.clone_repository import clone_repository
 from repository_mcp.tools.detect_project_type import detect_project_type
 from repository_mcp.tools.detect_services import detect_services
@@ -48,6 +50,9 @@ mcp.tool()(find_references)
 mcp.tool()(find_dependencies)
 mcp.tool()(detect_project_type)
 mcp.tool()(detect_services)
+
+register_resources(mcp)
+register_prompts(mcp)
 
 
 async def health(_: Request) -> JSONResponse:
