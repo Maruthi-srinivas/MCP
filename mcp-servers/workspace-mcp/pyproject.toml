@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "workspace-mcp"
+version = "0.1.0"
+description = "Approved workspace edits (V1.2)."
+requires-python = ">=3.12"
+dependencies = [
+    "mcp==1.25.0",
+    "psycopg[binary]==3.2.9",
+    "uvicorn==0.34.2",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest==8.3.5",
+    "httpx==0.28.1",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]

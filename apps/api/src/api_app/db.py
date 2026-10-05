@@ -469,6 +469,117 @@ def latest_session_job(session_id: str) -> dict | None:
         ).fetchone()
 
 
+def list_proposals(session_id: str) -> list[dict]:
+    with connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT *
+            FROM proposals
+            WHERE session_id = %s
+            ORDER BY created_at
+            """,
+            (session_id,),
+        ).fetchall()
+    return [_proposal(row) for row in rows]
+
+
+def get_proposal(proposal_id: str) -> dict | None:
+    with connect() as connection:
+        row = connection.execute("SELECT * FROM proposals WHERE id = %s", (proposal_id,)).fetchone()
+    return _proposal(row) if row else None
+
+
+def claim_proposals(session_id: str, caller_id: str) -> None:
+    with connect() as connection:
+        connection.execute(
+            """
+            UPDATE proposals
+            SET caller_id = %s, updated_at = now()
+            WHERE session_id = %s AND caller_id IS NULL
+            """,
+            (caller_id, session_id),
+        )
+        connection.commit()
+
+
+def approve_proposal(proposal_id: str, session_id: str, caller_id: str, approval_id: str) -> dict | None:
+    with connect() as connection:
+        row = connection.execute(
+            """
+            UPDATE proposals
+            SET status = 'approved',
+                approval_id = %s,
+                expires_at = now() + interval '10 minutes',
+                caller_id = %s,
+                updated_at = now()
+            WHERE id = %s AND session_id = %s AND status = 'proposed'
+            RETURNING *
+            """,
+            (approval_id, caller_id, proposal_id, session_id),
+        ).fetchone()
+        connection.commit()
+    return _proposal(row) if row else None
+
+
+def reject_proposal(proposal_id: str, session_id: str, caller_id: str) -> dict | None:
+    with connect() as connection:
+        row = connection.execute(
+            """
+            UPDATE proposals
+            SET status = 'rejected', caller_id = %s, updated_at = now()
+            WHERE id = %s AND session_id = %s AND status = 'proposed'
+            RETURNING *
+            """,
+            (caller_id, proposal_id, session_id),
+        ).fetchone()
+        connection.commit()
+    return _proposal(row) if row else None
+
+
+def expire_proposal(proposal_id: str) -> None:
+    with connect() as connection:
+        connection.execute(
+            """
+            UPDATE proposals
+            SET status = 'expired', expires_at = now() - interval '1 minute', updated_at = now()
+            WHERE id = %s
+            """,
+            (proposal_id,),
+        )
+        connection.commit()
+
+
+def _proposal(row: dict | None) -> dict | None:
+    if row is None:
+        return None
+    expires = row.get("expires_at")
+    return {
+        "proposal_id": str(row["id"]),
+        "repository_id": row["repository_id"],
+        "session_id": str(row["session_id"]) if row.get("session_id") else "",
+        "caller_id": row.get("caller_id") or "",
+        "base_commit": row.get("base_commit") or "",
+        "diff": row["diff_text"],
+        "diff_hash": row["diff_hash"],
+        "status": row["status"],
+        "approval_id": str(row["approval_id"]) if row.get("approval_id") else "",
+        "expires_at": expires.isoformat() if expires else "",
+        "files": _diff_files(row["diff_text"]),
+    }
+
+
+def _diff_files(diff: str) -> list[str]:
+    paths = []
+    for line in str(diff).splitlines():
+        if not line.startswith("+++ "):
+            continue
+        path = line[4:].strip().split("\t", 1)[0]
+        if path.startswith("b/") or path.startswith("a/"):
+            path = path[2:]
+        paths.append(path)
+    return paths
+
+
 def cleanup_job_pending() -> bool:
     with connect() as connection:
         row = connection.execute(

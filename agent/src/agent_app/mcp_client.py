@@ -9,13 +9,14 @@ from agent_app.config import Settings
 
 
 class HttpMcpHub:
-    """List and call tools on the three Compose servers. One session per call."""
+    """List and call tools on the Compose servers. One session per call."""
 
     def __init__(self, settings: Settings) -> None:
         self._servers = {
             "repository-mcp": settings.repository_mcp_url,
             "git-mcp": settings.git_mcp_url,
             "analysis-mcp": settings.analysis_mcp_url,
+            "workspace-mcp": settings.workspace_mcp_url,
         }
         self._owners: dict[str, str] = {}
         self._prompt_owners: dict[str, str] = {}

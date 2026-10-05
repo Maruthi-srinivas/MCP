@@ -28,6 +28,9 @@ def test_live_health():
     frontend_url = os.environ.get("FRONTEND_SMOKE_BASE_URL", "").strip()
     if frontend_url:
         _check(frontend_url)
+    workspace_url = os.environ.get("WORKSPACE_SMOKE_BASE_URL", "").strip()
+    if workspace_url:
+        _check(workspace_url)
 
 
 def _check(base_url: str) -> None:

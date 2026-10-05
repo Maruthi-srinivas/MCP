@@ -37,4 +37,6 @@ def argument_summary(arguments: dict) -> dict:
         summary["name"] = arguments["symbol"]
     if arguments.get("ref"):
         summary["ref"] = arguments["ref"]
+    if arguments.get("proposal_id"):
+        summary["proposal_id"] = arguments["proposal_id"]
     return summary

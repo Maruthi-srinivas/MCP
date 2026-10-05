@@ -24,8 +24,9 @@ def tool_key(repository_id: str, commit_sha: str, tool: str, arguments: dict) ->
     return f"tool:{repository_id}:{commit_sha}:{tool}:{digest}"
 
 
-def analysis_key(repository_id: str, commit_sha: str) -> str:
-    return f"analysis:{repository_id}:{commit_sha}"
+def analysis_key(repository_id: str, commit_sha: str, analyzer_version: str) -> str:
+    """The version is part of the key so an older artifact is rebuilt."""
+    return f"analysis:{repository_id}:{commit_sha}:{analyzer_version}"
 
 
 def lock_key(repository_id: str) -> str:

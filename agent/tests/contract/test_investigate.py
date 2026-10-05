@@ -23,6 +23,7 @@ def _settings(**overrides) -> Settings:
         repository_mcp_url="http://repository-mcp:8000/mcp",
         git_mcp_url="http://git-mcp:8001/mcp",
         analysis_mcp_url="http://analysis-mcp:8002/mcp",
+        workspace_mcp_url="http://workspace-mcp:8005/mcp",
         max_steps=8,
         max_tool_calls=12,
         max_tool_output_chars=4000,
@@ -31,6 +32,27 @@ def _settings(**overrides) -> Settings:
     )
     values.update(overrides)
     return Settings(**values)
+
+
+def test_comment_question_only_proposes():
+    hub = FakeMcp()
+    result = asyncio.run(
+        investigate(
+            {
+                "repository_id": "repo_service",
+                "session_id": "22222222-2222-2222-2222-222222222222",
+                "question": "Add the comment reviewed to app/main.py",
+            },
+            hub=hub,
+            model=ScriptedModel(),
+            settings=_settings(),
+        )
+    )
+    assert [step["tool"] for step in result["trace"]] == ["propose_patch"]
+    assert [name for name, _args in hub.calls] == ["propose_patch"]
+    assert hub.calls[0][1]["session_id"] == "22222222-2222-2222-2222-222222222222"
+    assert "diff" not in result["trace"][0]["arguments"]
+    assert result["trace"][0]["arguments"]["proposal_id"] == "11111111-1111-1111-1111-111111111111"
 
 
 def test_scripted_model_has_no_route_literal():
@@ -182,6 +204,10 @@ def test_health_stays_up_without_a_key(monkeypatch):
     health = client.get("/health")
     assert health.status_code == 200
     assert health.json()["status"] == "ok"
+    metrics = client.get("/metrics")
+    assert metrics.status_code == 200
+    assert metrics.json()["service"] == "agent"
+    assert "counters" in metrics.json()
     body = client.post("/investigate", json={"repository_id": "repo_service", "question": "hello"})
     assert body.json()["stopped_reason"] == "configuration"
     assert body.json()["trace"] == []
@@ -201,6 +227,22 @@ def test_unknown_prompt_makes_no_tool_calls():
     assert result["trace"] == []
     assert result["stopped_reason"] == "answered"
     assert "not found" in result["answer"]
+
+
+PROMPT_NAMES = (
+    "explain_repository",
+    "explain_symbol",
+    "investigate_change",
+    "onboard_developer",
+    "review_architecture",
+    "trace_api",
+)
+
+
+def test_scripted_hub_prompt_stays_inside_the_catalog():
+    names = {item["name"] for item in asyncio.run(FakeMcp().list_prompts())}
+    assert names == {"trace_api"}
+    assert names <= set(PROMPT_NAMES)
 
 
 def test_trace_api_prompt_runs_the_five_tools():
@@ -224,6 +266,25 @@ def test_trace_api_prompt_runs_the_five_tools():
         "find_references",
         "detect_database_access",
     ]
+    assert result["stopped_reason"] == "answered"
+
+
+def test_express_question_searches_then_reads_the_route_file():
+    hub = FakeMcp()
+    result = asyncio.run(
+        investigate(
+            {
+                "repository_id": "repo_service",
+                "question": "How does the Express /notes route reach the database?",
+            },
+            hub=hub,
+            model=ScriptedModel(),
+            settings=_settings(),
+        )
+    )
+    assert [step["tool"] for step in result["trace"]] == ["search_symbols", "read_file"]
+    assert result["trace"][1]["arguments"]["path"] == "app.js"
+    assert "app.js" in result["answer"]
     assert result["stopped_reason"] == "answered"
 
 

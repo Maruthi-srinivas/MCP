@@ -34,3 +34,16 @@ class RedactingFilter(logging.Filter):
 
 def install_redacting_logs() -> None:
     logging.getLogger().addFilter(RedactingFilter())
+
+
+_LOG_FIELDS = ("request_id", "session_id", "repository_id", "tool", "error_code")
+
+
+def log_event(event: str, *, duration_ms: int = 0, status: str = "ok", **fields: object) -> None:
+    """One key=value line. Tokens and raw tool arguments are not fields."""
+    parts = [f"event={event}", f"duration_ms={int(duration_ms)}", f"status={status}"]
+    for key in _LOG_FIELDS:
+        value = fields.get(key)
+        if value not in (None, ""):
+            parts.append(f"{key}={value}")
+    logging.getLogger("investigator").info(redact(" ".join(parts)))

@@ -1,12 +1,19 @@
 """Map the two local tokens to caller ids. The token is never stored."""
 
+import re
+import time
+import uuid
+
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+
+from investigator_shared.secrets import log_event
 
 from api_app.config import get_settings
 
 router = APIRouter()
-OPEN_PATHS = {"/health", "/ready"}
+OPEN_PATHS = {"/health", "/ready", "/metrics"}
+_REPOSITORY = re.compile(r"/repositories/(repo_[0-9a-f]+)")
 
 
 def caller_id(authorization: str | None) -> str | None:
@@ -42,7 +49,8 @@ class AuthGate:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        if scope.get("method") == "OPTIONS" or scope.get("path") in OPEN_PATHS:
+        path = scope.get("path") or ""
+        if scope.get("method") == "OPTIONS" or path in OPEN_PATHS:
             await self.app(scope, receive, send)
             return
         headers = {key.decode("latin1").lower(): value.decode("latin1") for key, value in scope.get("headers") or []}
@@ -51,7 +59,29 @@ class AuthGate:
             await unauthorized()(scope, receive, send)
             return
         scope.setdefault("state", {})["caller_id"] = caller
-        await self.app(scope, receive, send)
+        await _call_and_log(self.app, scope, receive, send, path)
+
+
+async def _call_and_log(app, scope, receive, send, path: str) -> None:
+    """Time the request and log it. The request id is not stored."""
+    request_id = uuid.uuid4().hex[:12]
+    started = time.perf_counter()
+    status = {"code": 500}
+
+    async def send_with_status(message):
+        if message["type"] == "http.response.start":
+            status["code"] = message["status"]
+        await send(message)
+
+    await app(scope, receive, send_with_status)
+    found = _REPOSITORY.search(path)
+    log_event(
+        "http_request",
+        duration_ms=int((time.perf_counter() - started) * 1000),
+        status=str(status["code"]),
+        request_id=request_id,
+        repository_id=found.group(1) if found else "",
+    )
 
 
 @router.get("/me")

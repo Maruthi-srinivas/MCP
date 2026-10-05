@@ -145,7 +145,7 @@ V0.2 adds Python structure on the same server. Browse and search from V0.1 are u
 
 `find_references` does not follow aliases. A reference is a use of the exact name in a file that defines it, or an import line that names it. `import create_user as make_user` counts that import line. Later uses of `make_user` do not.
 
-A repository with Python and other languages still indexes the Python files and adds a warning for skipped source files. Structural tools return `UNSUPPORTED_LANGUAGE` only when there are no Python files. JavaScript and TypeScript are not parsed.
+`find_symbol` on repository-mcp still indexes Python with `ast`. A non-Python file there is a warning. analysis-mcp parses JavaScript, TypeScript, and Java with Tree-sitter and leaves Go as that same kind of warning. `search_symbols` on analysis-mcp embeds the symbol line with MiniLM and reads the nearest rows from Postgres.
 
 ## How get_file_history moves through the code
 
@@ -189,7 +189,7 @@ V0.6 adds read-only JSON resources and reusable prompts. A resource is one docum
 1. A client reads `repo://{id}/file/{path}`, for example `repo://repo_abc/file/app/main.py`. [mcp-servers/repository-mcp/src/repository_mcp/server.py](mcp-servers/repository-mcp/src/repository_mcp/server.py) registers that template. The path is the remainder of the URI, so slashes inside the file path stay intact.
 2. [mcp-servers/repository-mcp/src/repository_mcp/resources.py](mcp-servers/repository-mcp/src/repository_mcp/resources.py) keeps the path inside the checkout with the same rules as `read_file`. `..`, an absolute path, and `.git` return `INVALID_PATH`. An unknown `repository_id` returns `REPOSITORY_NOT_FOUND` in the JSON body.
 3. [shared/investigator_shared/secrets.py](shared/investigator_shared/secrets.py) redacts the file text before it is returned. A line whose name ends with `_KEY`, `_TOKEN`, or `_SECRET` loses its value. A PEM private-key block is removed. `GITHUB_TOKEN` is never copied into a resource. [shared/investigator_shared/bounds.py](shared/investigator_shared/bounds.py) caps the JSON at `RESOURCE_MAX_CHARS`.
-4. `trace_api` is registered in [mcp-servers/analysis-mcp/src/analysis_mcp/prompts.py](mcp-servers/analysis-mcp/src/analysis_mcp/prompts.py). Its text names `search_code`, `find_symbol`, `read_file`, `find_references`, and `detect_database_access` in that order. The endpoint path is an argument.
+4. `trace_api` is registered in [mcp-servers/analysis-mcp/src/analysis_mcp/prompts.py](mcp-servers/analysis-mcp/src/analysis_mcp/prompts.py). Its text names `search_symbols`, then `search_code`, `find_symbol`, `read_file`, `find_references`, and `detect_database_access`. The endpoint path is an argument.
 5. `POST /investigate` can send `prompt` and `arguments`. [agent/src/agent_app/server.py](agent/src/agent_app/server.py) asks [agent/src/agent_app/prompts.py](agent/src/agent_app/prompts.py) to load that prompt. [agent/src/agent_app/mcp_client.py](agent/src/agent_app/mcp_client.py) calls `get_prompt` on the server that lists the name. The returned text becomes the question for the existing loop. An unknown name returns an answer that the prompt was not found and an empty trace.
 
 Metadata, structure, and dependencies stay on repository-mcp. Architecture and endpoints stay on analysis-mcp. git-mcp has `investigate_change` and no resources.
@@ -259,9 +259,74 @@ The same request path covers traversal, huge files, malicious filenames, secret 
 
 The host browser reaches the UI on port 3000 and the API on port 8004. The MCP servers and the agent stay on the Compose network. The Inspector still uses `http://repository-mcp:8000/mcp`.
 
+## How the running stack fits together
+
+V1.0 does not add a tool. It makes the V0.9 path observable. The host publishes the UI on port 3000 and the API on port 8004. MCP and the agent stay on the Compose network.
+
+```mermaid
+sequenceDiagram
+  participant Browser
+  participant Frontend
+  participant Api
+  participant Agent
+  participant Mcp
+  participant Postgres
+  participant Redis
+  Browser->>Frontend: localhost:3000
+  Browser->>Api: localhost:8004
+  Api->>Postgres: rows
+  Api->>Redis: cache and quotas
+  Api->>Agent: investigate
+  Agent->>Mcp: tool call
+```
+
+Each process exposes `GET /metrics` as JSON: counters and histograms (`count`, `sum_ms`, `max_ms`, and buckets under 100 ms, under 1 s, and the rest). A restart clears the numbers. There is no Prometheus container and no metrics page. `GET /metrics` is open, like `/health`. Log lines are `key=value` text from `log_event` in [shared/investigator_shared/secrets.py](shared/investigator_shared/secrets.py). A line can carry `event`, `duration_ms`, `status`, `request_id`, `session_id`, and `repository_id`. It does not carry a token or raw tool arguments.
+
+## Frozen catalog
+
+These names and argument names are the V1.0 contract. The registration tests fail if a live tool drifts. A later break needs a version note in this file.
+
+repository-mcp tools: `clone_repository` (`repository_url`, `ref`), `get_repository_info` (`repository_id`), `list_directory` (`repository_id`, `path`), `read_file` (`repository_id`, `path`, `start_line`, `end_line`), `search_code` (`repository_id`, `query`, `file_pattern`), `find_symbol` (`repository_id`, `symbol`), `find_references` (`repository_id`, `symbol`), `find_dependencies` (`repository_id`), `detect_project_type` (`repository_id`), `detect_services` (`repository_id`).
+
+repository-mcp resources: `repo://{repository_id}/metadata`, `structure`, `dependencies`, and `file/{file_path}`. Prompts: `explain_repository` (`repository_id`), `onboard_developer` (`repository_id`), `explain_symbol` (`repository_id`, `symbol`).
+
+git-mcp tools: `get_git_status` (`repository_id`), `get_branches` (`repository_id`), `get_commits` (`repository_id`, `ref`, `page`, `page_size`), `get_commit` (`repository_id`, `ref`), `get_diff` (`repository_id`, `base`, `head`), `get_file_history` (`repository_id`, `path`, `ref`, `page`, `page_size`), `compare_branches` (`repository_id`, `base`, `head`), `find_introduced_change` (`repository_id`, `path`, `line`). Prompt: `investigate_change` (`repository_id`, `path`).
+
+analysis-mcp tools: `analyze_code` (`repository_id`), `find_functions` (`repository_id`, `name`, `page`, `page_size`), `find_classes` (`repository_id`, `name`, `page`, `page_size`), `find_imports` (`repository_id`, `name`, `page`, `page_size`), `build_dependency_graph` (`repository_id`), `detect_entrypoints` (`repository_id`), `detect_api_endpoints` (`repository_id`), `detect_database_access` (`repository_id`), `detect_external_services` (`repository_id`), `search_symbols` (`repository_id`, `query`). Resources: `repo://{repository_id}/architecture` and `repo://{repository_id}/analysis/endpoints`. Prompts: `review_architecture` (`repository_id`), `trace_api` (`repository_id`, `endpoint`).
+
+workspace-mcp tools, registered only when `WRITE_ENABLED=1`: `propose_patch` (`repository_id`, `diff`, `session_id`), `preview_patch` (`proposal_id`), `apply_patch` (`proposal_id`, `approval_id`). The agent fills `session_id`. The model does not choose it. A default `docker compose up` leaves `WRITE_ENABLED` at `0`, so these three tools are absent.
+
+Error codes: `INVALID_REPOSITORY_URL`, `REPOSITORY_NOT_FOUND`, `CLONE_FAILED`, `INVALID_PATH`, `FILE_NOT_FOUND`, `FILE_TOO_LARGE`, `TOOL_TIMEOUT`, `GITHUB_RATE_LIMIT`, `INTERNAL_ERROR`, `SYMBOL_NOT_FOUND`, `UNSUPPORTED_LANGUAGE`, `GIT_REF_NOT_FOUND`, `ANALYSIS_TIMEOUT`, `UNAUTHORIZED`, `QUOTA_EXCEEDED`, `RATE_LIMITED`.
+
+## Demo script
+
+Sign in at `http://localhost:3000/login` with `alice-local-token`. Then:
+
+1. Import `file:///fixtures/service_app` and wait until the overview shows a commit.
+2. Open the overview and read languages, dependencies, and analysis status. After analysis has finished, search for a symbol and open the cited line.
+3. Run `explain_repository`. Open the trace and confirm a row names a server and a tool, and does not contain the file body.
+4. Open the first "Found in" link and read the cited lines.
+5. Open architecture and click a node.
+6. Open jobs.
+7. Request the file path `../../etc/passwd`. The API returns `INVALID_PATH`.
+8. A second caller with `bob-local-token` gets `REPOSITORY_NOT_FOUND` for Alice's repository and for Alice's trace.
+9. With `WRITE_ENABLED=1`, ask `Add the comment reviewed to app/main.py`. Approve the diff in the chat, then Apply. Open `app/main.py` and read `# reviewed` on the first line. The default stack skips this step because the write tools are not registered.
+
+The last step is manual and needs a network: import `https://github.com/pallets/flask` at the default branch. Skip it when GitHub is unreachable. Automated tests stay on `file://` fixtures.
+
+To call an MCP tool by name, use the Inspector profile. The server URL inside that container is `http://repository-mcp:8000/mcp`.
+
+## Known limitations
+
+Git tools stay read-only. There is no commit, push, or pull request. There is no SSO or OAuth. `WRITE_ENABLED` defaults to `0`, so a normal `docker compose up` does not register `propose_patch`, `preview_patch`, or `apply_patch`. With the flag on, the owner approves a diff in the chat and the approval lasts 10 minutes. Metrics reset when a process restarts. This stack does not run Prometheus or Grafana. Go files are listed as a warning and are not parsed. Symbol search uses a MiniLM model baked into the analysis image at build time. The running container does not download that model. Call edges are name matches in the parsed files, so a dynamic call can be missed.
+
+## Version note
+
+V1.2 adds `propose_patch`, `preview_patch`, and `apply_patch` on workspace-mcp. They are registered only when `WRITE_ENABLED=1`. The default stack does not register them. An approved diff is written in Python after the repository owner clicks Approve. Git stays read-only. V1.1 adds JavaScript, TypeScript, and Java parsing, the `search_symbols` tool, and pgvector symbol search. Analyzer version `0.5.0` replaces `0.4.0`, so a stored analysis for the same commit is rebuilt. Existing tool argument names stay. V1.0 added metrics, key=value logs, the `multi_module` and `nested_read` fixtures, and the demo docs.
+
 ## What this version does not do
 
-SSO, OAuth, and write tools stay later. JavaScript, TypeScript, Java, and Go are not parsed. analysis-mcp does not summarize the graph with a model. The agent does not write to a repository. git-mcp cannot commit, push, or check out a branch. See [VERSION_ROADMAP.md](VERSION_ROADMAP.md).
+SSO and OAuth stay later. Go is not parsed. analysis-mcp does not summarize the graph with a model. The agent proposes a diff and does not apply it. git-mcp cannot commit, push, or check out a branch. Kubernetes, a mobile client, and a separate metrics product stay out. See [VERSION_ROADMAP.md](VERSION_ROADMAP.md).
 
 ## Logs and shutdown
 
@@ -273,6 +338,12 @@ docker compose logs -f agent
 docker compose logs -f api
 docker compose logs -f frontend
 docker compose down
+```
+
+A log line looks like `event=tool_call duration_ms=12 status=success request_id=req_abc repository_id=repo_123 tool=search_code`. Metrics for one process:
+
+```bash
+curl http://127.0.0.1:8004/metrics
 ```
 
 `docker compose down -v` also deletes cloned workspaces.

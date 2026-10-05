@@ -8,7 +8,10 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from investigator_shared.secrets import log_event
+
 from agent_app.config import get_settings, model_ready
+from agent_app.metrics import snapshot as metrics_snapshot
 from agent_app.graph import run_investigation
 from agent_app.mcp_client import HttpMcpHub
 from agent_app.prompts import load_prompt
@@ -18,6 +21,11 @@ from agent_app.trace import argument_hash, argument_summary, remember
 async def health(_: Request) -> JSONResponse:
     """Process health for Compose. This does not check the API key."""
     return JSONResponse({"status": "ok", "service": "agent"})
+
+
+async def metrics(_: Request) -> JSONResponse:
+    """Counters and histograms for this process. A restart clears them."""
+    return JSONResponse(metrics_snapshot())
 
 
 async def investigate_route(request: Request) -> JSONResponse:
@@ -81,8 +89,23 @@ async def investigate(body: dict, hub=None, model=None, settings=None) -> dict:
         repository_id = cloned["repository_id"]
         commit_sha = cloned.get("resolved_commit") or ""
 
-    result = await run_investigation(question, repository_id, commit_sha, hub, model, settings)
+    started_loop = time.perf_counter()
+    result = await run_investigation(
+        question,
+        repository_id,
+        commit_sha,
+        hub,
+        model,
+        settings,
+        session_id=str(body.get("session_id") or ""),
+    )
     result["trace"] = (trace + result["trace"])[: settings.max_steps]
+    log_event(
+        "investigation",
+        duration_ms=int((time.perf_counter() - started_loop) * 1000),
+        status=result.get("stopped_reason") or "answered",
+        repository_id=repository_id,
+    )
     return result
 
 
@@ -103,6 +126,7 @@ def _empty(answer: str, reason: str) -> dict:
 app = Starlette(
     routes=[
         Route("/health", endpoint=health, methods=["GET"]),
+        Route("/metrics", endpoint=metrics, methods=["GET"]),
         Route("/investigate", endpoint=investigate_route, methods=["POST"]),
     ]
 )

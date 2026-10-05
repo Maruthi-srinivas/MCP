@@ -1,12 +1,16 @@
-"""One JSON log line per tool call. Arguments and tokens are not logged."""
+"""One key=value log line per tool call. Arguments and tokens are not logged."""
 
 import functools
+import inspect
 import logging
 import time
 import uuid
 from collections.abc import Callable
 
+from investigator_shared.secrets import log_event
+
 from repository_mcp.errors import ToolFailure, error_body
+from repository_mcp.metrics import record
 
 logger = logging.getLogger("repository_mcp")
 
@@ -30,19 +34,22 @@ def log_tool_call(
     status: str,
     result_items: int,
     error_code: str | None = None,
+    repository_id: str = "",
 ) -> None:
     """Emit the structured line operators read with docker compose logs."""
-    payload = {
-        "request_id": request_id,
-        "mcp_server": "repository-mcp",
-        "tool": tool,
-        "duration_ms": duration_ms,
-        "status": status,
-        "result_items": result_items,
-    }
-    if error_code:
-        payload["error_code"] = error_code
-    logger.info("%s", payload)
+    del result_items
+    record(tool, duration_ms, status)
+    if tool == "clone_repository":
+        record("clone", duration_ms, status)
+    log_event(
+        "tool_call",
+        duration_ms=duration_ms,
+        status=status,
+        request_id=request_id,
+        repository_id=repository_id,
+        tool=tool,
+        error_code=error_code,
+    )
 
 
 def observed_tool(fn: Callable) -> Callable:
@@ -63,6 +70,7 @@ def observed_tool(fn: Callable) -> Callable:
                 status="error",
                 result_items=0,
                 error_code=failure.code,
+                repository_id=_repository_id(fn, args, kwargs, None),
             )
             return error_body(failure, request_id)
         except Exception:
@@ -74,6 +82,7 @@ def observed_tool(fn: Callable) -> Callable:
                 status="error",
                 result_items=0,
                 error_code="INTERNAL_ERROR",
+                repository_id=_repository_id(fn, args, kwargs, None),
             )
             logger.exception("tool %s failed", fn.__name__)
             return error_body(
@@ -87,7 +96,19 @@ def observed_tool(fn: Callable) -> Callable:
             duration_ms=duration_ms,
             status="success",
             result_items=_result_items(result),
+            repository_id=_repository_id(fn, args, kwargs, result),
         )
         return result
 
     return wrapper
+
+
+def _repository_id(fn: Callable, args: tuple, kwargs: dict, result: dict | None) -> str:
+    if kwargs.get("repository_id"):
+        return str(kwargs["repository_id"])
+    names = list(inspect.signature(fn).parameters)
+    if names and names[0] == "repository_id" and args:
+        return str(args[0])
+    if isinstance(result, dict) and result.get("repository_id"):
+        return str(result["repository_id"])
+    return ""

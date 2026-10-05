@@ -23,7 +23,7 @@ def explain_symbol(repository_id: str, symbol: str) -> str:
     """Explain one symbol. Cite file and line from tool results."""
     return (
         "Explain one symbol. Cite file and line from tool results. Do not invent files. "
-        "Call find_symbol, find_references, and read_file. "
+        "Call search_symbols, find_symbol, find_references, and read_file. "
         f"repository_id is {repository_id}. The symbol is {symbol}."
     )
 

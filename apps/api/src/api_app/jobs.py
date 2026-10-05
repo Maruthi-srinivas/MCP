@@ -3,12 +3,16 @@
 import asyncio
 import json
 import logging
+import time
 import uuid
 from pathlib import Path
 
 import httpx
 
+from investigator_shared.secrets import log_event
+
 from api_app import cache, db, quotas
+from api_app.metrics import increment, record
 from api_app.cleanup import expire_workspaces
 from api_app.config import get_settings
 from api_app.files import list_files
@@ -85,13 +89,29 @@ async def _import(job: dict) -> None:
 
 
 async def _clone(job: dict, payload: dict) -> None:
+    started = time.perf_counter()
+    status = "failed"
+    repository_id = ""
+    try:
+        await _clone_body(job, payload)
+        status = "succeeded"
+        repository_id = str(job.get("repository_id") or "")
+    except _Stopped:
+        repository_id = str(job.get("repository_id") or "")
+    finally:
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        record("import", duration_ms, status)
+        log_event("import", duration_ms=duration_ms, status=status, repository_id=repository_id)
+
+
+async def _clone_body(job: dict, payload: dict) -> None:
     arguments = {"repository_url": payload["url"]}
     if payload.get("ref"):
         arguments["ref"] = payload["ref"]
     cloned = await call_tool("clone_repository", arguments)
     if cloned.get("error"):
         db.finish_job(str(job["id"]), "failed", cloned["error"].get("code") or "CLONE_FAILED")
-        return
+        raise _Stopped()
     repository_id = cloned["repository_id"]
     db.remember_idempotency(repository_id, job.get("idempotency_key"))
     root = Path(cloned["workspace_path"])
@@ -101,7 +121,7 @@ async def _clone(job: dict, payload: dict) -> None:
     if structure.get("error") or dependencies.get("error"):
         code = (structure.get("error") or dependencies.get("error") or {}).get("code") or "INTERNAL_ERROR"
         db.finish_job(str(job["id"]), "failed", code)
-        return
+        raise _Stopped()
     db.replace_symbols(repository_id, structure.get("symbols") or [])
     db.replace_dependencies(
         repository_id,
@@ -114,66 +134,93 @@ async def _clone(job: dict, payload: dict) -> None:
             for item in dependencies.get("dependencies") or []
         ],
     )
+    job["repository_id"] = repository_id
     db.finish_job(str(job["id"]), "succeeded", None, {**payload, "repository_id": repository_id})
 
 
 async def _analyze(job: dict) -> None:
+    started = time.perf_counter()
+    status = await _analyze_body(job)
+    if status == "queued":
+        return
+    duration_ms = int((time.perf_counter() - started) * 1000)
+    record("analysis", duration_ms, status)
+    log_event(
+        "analysis",
+        duration_ms=duration_ms,
+        status=status,
+        repository_id=str(job.get("repository_id") or ""),
+    )
+
+
+async def _analyze_body(job: dict) -> str:
     repository_id = job["repository_id"]
     lock = cache.lock_key(repository_id)
     if not cache.acquire(lock):
         await asyncio.sleep(0.5)
         db.finish_job(str(job["id"]), "queued", None)
-        return
+        return "queued"
     try:
-        record = db.get_repository_row(repository_id)
-        if record is None:
+        row = db.get_repository_row(repository_id)
+        if row is None:
             db.finish_job(str(job["id"]), "failed", "REPOSITORY_NOT_FOUND")
-            return
-        commit = record["resolved_commit"]
-        cached = cache.get_json(cache.analysis_key(repository_id, commit))
+            return "failed"
+        commit = row["resolved_commit"]
+        version = get_settings().analyzer_version
+        cached = cache.get_json(cache.analysis_key(repository_id, commit, version))
         search_arguments = {"repository_id": repository_id, "query": "def"}
         search_cache_key = cache.tool_key(repository_id, commit, "search_code", search_arguments)
         if cache.get_json(search_cache_key) is not None:
+            increment("cache_hits")
             cache.note_hit("search_code", search_cache_key)
         else:
             found = await call_tool("search_code", search_arguments)
             if not found.get("error"):
                 cache.set_json(search_cache_key, {"ok": True})
         if cached is not None:
-            cache.note_hit("analyze_code", cache.analysis_key(repository_id, commit))
+            increment("cache_hits")
+            cache.note_hit("analyze_code", cache.analysis_key(repository_id, commit, version))
             payload = _payload(job)
             payload["cache_hit"] = True
             db.finish_job(str(job["id"]), "succeeded", None, payload)
-            return
+            return "succeeded"
         analyzed = await call_tool("analyze_code", {"repository_id": repository_id})
         if analyzed.get("error"):
             db.finish_job(str(job["id"]), "failed", analyzed["error"].get("code") or "INTERNAL_ERROR")
-            return
+            return "failed"
         architecture = await read_json(f"repo://{repository_id}/architecture")
         if architecture.get("error"):
             db.finish_job(str(job["id"]), "failed", architecture["error"].get("code") or "INTERNAL_ERROR")
-            return
+            return "failed"
         version = architecture.get("analyzer_version") or analyzed.get("analyzer_version") or ""
         db.insert_analysis(repository_id, commit, version, architecture)
         cache.set_json(
-            cache.analysis_key(repository_id, commit),
+            cache.analysis_key(repository_id, commit, version),
             {"analyzer_version": version, "body": architecture},
         )
         payload = _payload(job)
         payload["cache_hit"] = False
         db.finish_job(str(job["id"]), "succeeded", None, payload)
+        return "succeeded"
     finally:
         cache.release(lock)
 
 
+class _Stopped(Exception):
+    """The job already stored its failure. The timer still records it."""
+
+
 async def _investigate(job: dict) -> None:
+    started = time.perf_counter()
     payload = _payload(job)
     session_id = payload.get("session_id") or ""
     session = db.get_session(session_id)
     if session is None:
         db.finish_job(str(job["id"]), "failed", "REPOSITORY_NOT_FOUND")
+        record("investigation", int((time.perf_counter() - started) * 1000), "failed")
+        log_event("investigation", duration_ms=int((time.perf_counter() - started) * 1000), status="failed", session_id=session_id)
         return
-    body = {"repository_id": session["repository_id"]}
+    body = {"repository_id": session["repository_id"], "session_id": session_id}
     if payload.get("question"):
         body["question"] = payload["question"]
     if payload.get("prompt"):
@@ -205,10 +252,30 @@ async def _investigate(job: dict) -> None:
             }
         )
     db.insert_tool_calls(session_id, rows)
+    db.claim_proposals(session_id, session.get("caller_id") or "")
+    steps = len(result.get("trace") or [])
+    increment("investigation_steps", steps)
+    duration_ms = int((time.perf_counter() - started) * 1000)
     if result.get("stopped_reason") == "max_tool_calls":
         db.finish_job(str(job["id"]), "failed", "QUOTA_EXCEEDED", payload)
+        record("investigation", duration_ms, "failed")
+        log_event(
+            "investigation",
+            duration_ms=duration_ms,
+            status="failed",
+            session_id=session_id,
+            repository_id=session["repository_id"],
+        )
         return
     db.finish_job(str(job["id"]), "succeeded", None, payload)
+    record("investigation", duration_ms, "succeeded")
+    log_event(
+        "investigation",
+        duration_ms=duration_ms,
+        status="succeeded",
+        session_id=session_id,
+        repository_id=session["repository_id"],
+    )
 
 
 async def _ask_agent(body: dict) -> dict:
@@ -220,7 +287,7 @@ async def _ask_agent(body: dict) -> dict:
 
 def public_arguments(arguments: dict) -> dict:
     kept = {}
-    for key in ("repository_id", "path", "name", "ref"):
+    for key in ("repository_id", "path", "name", "ref", "proposal_id"):
         if arguments.get(key):
             kept[key] = arguments[key]
     return kept

@@ -221,6 +221,32 @@ async def repository_jobs(repository_id: str, request: Request):
     }
 
 
+@router.get("/repositories/{repository_id}/search")
+async def search_repository(repository_id: str, request: Request, q: str = Query(default="")):
+    if not db.has_access(repository_id, request.state.caller_id):
+        return _error(404, "REPOSITORY_NOT_FOUND", "Unknown repository_id.", False)
+    row = db.get_repository_row(repository_id)
+    if row is None:
+        return _error(404, "REPOSITORY_NOT_FOUND", "Unknown repository_id.", False)
+    found = await call_tool("search_symbols", {"repository_id": repository_id, "query": q})
+    if found.get("error"):
+        error = found["error"]
+        code = error.get("code") or "INTERNAL_ERROR"
+        status = 404 if code == "REPOSITORY_NOT_FOUND" else 400
+        return _error(status, code, error.get("message") or "Search failed.", bool(error.get("retryable")))
+    matches = []
+    for item in found.get("matches") or []:
+        matches.append(
+            {
+                "name": item.get("name") or "",
+                "path": item.get("path") or "",
+                "line": item.get("line") or 1,
+                "snippet": item.get("snippet") or "",
+            }
+        )
+    return {"repository_id": repository_id, "query": q, "matches": matches}
+
+
 @router.get("/repositories/{repository_id}/file")
 async def repository_file(
     repository_id: str,

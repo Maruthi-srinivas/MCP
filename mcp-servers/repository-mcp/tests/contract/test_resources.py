@@ -84,6 +84,8 @@ def test_prompts_are_listed_and_name_tools():
     assert "list_directory" in texts["onboard_developer"]
     assert "detect_services" in texts["onboard_developer"]
     assert "read_file" in texts["onboard_developer"]
+    assert "search_symbols" in texts["explain_symbol"]
+    assert texts["explain_symbol"].find("search_symbols") < texts["explain_symbol"].find("find_symbol")
     assert "find_symbol" in texts["explain_symbol"]
     assert "find_references" in texts["explain_symbol"]
     assert "read_file" in texts["explain_symbol"]

@@ -81,6 +81,8 @@ def build(functions: list[dict], imports: list[dict], calls: list[dict], files: 
 
 def resolve_module(file_path: str, module: str, level: int, files: set[str]) -> str | None:
     """Map an import to a parsed project file, or return None for a third-party module."""
+    if module.startswith("."):
+        return _relative_file(file_path, module, files)
     parts = file_path.split("/")
     package = parts[:-1]
     if level:
@@ -101,6 +103,35 @@ def resolve_module(file_path: str, module: str, level: int, files: set[str]) -> 
         return relative
     if package_init in files:
         return package_init
+    java_path = "/".join(candidate) + ".java"
+    for existing in files:
+        if existing == java_path or existing.endswith("/" + java_path):
+            return existing
+    return None
+
+
+def _relative_file(file_path: str, module: str, files: set[str]) -> str | None:
+    """Resolve ./db and ../db.js against the importing file."""
+    directory = file_path.split("/")[:-1]
+    parts = list(directory)
+    for piece in module.split("/"):
+        if piece in {"", "."}:
+            continue
+        if piece == "..":
+            if not parts:
+                return None
+            parts.pop()
+            continue
+        parts.append(piece)
+    stem = "/".join(parts)
+    candidates = [stem]
+    for suffix in (".js", ".ts", ".tsx", ".mjs", ".cjs", ".jsx", ".java"):
+        candidates.append(stem + suffix)
+    for suffix in ("/index.js", "/index.ts"):
+        candidates.append(stem + suffix)
+    for candidate in candidates:
+        if candidate in files:
+            return candidate
     return None
 
 

@@ -16,6 +16,7 @@ from api_app.auth import AuthGate
 from api_app.auth import router as identity
 from api_app.body_limit import BodyLimit
 from api_app.config import get_settings
+from api_app.metrics import snapshot as metrics_snapshot
 from api_app.routes.investigations import router as investigations
 from api_app.routes.prompts import router as prompts
 from api_app.routes.repositories import router as repositories
@@ -51,6 +52,12 @@ app.include_router(identity)
 app.include_router(repositories)
 app.include_router(investigations)
 app.include_router(prompts)
+
+
+@app.get("/metrics")
+async def metrics():
+    """Counters and histograms for this process. A restart clears them."""
+    return metrics_snapshot()
 
 
 @app.get("/health")

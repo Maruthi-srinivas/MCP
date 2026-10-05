@@ -21,6 +21,7 @@ class Settings:
     repository_mcp_url: str
     git_mcp_url: str
     analysis_mcp_url: str
+    workspace_mcp_url: str
     agent_url: str
     imports_per_minute: int
     analyses_per_minute: int
@@ -33,6 +34,7 @@ class Settings:
     max_concurrent_imports: int
     max_analysis_jobs: int
     max_body_bytes: int
+    analyzer_version: str
 
 
 def get_settings() -> Settings:
@@ -48,6 +50,7 @@ def get_settings() -> Settings:
         repository_mcp_url=os.environ.get("REPOSITORY_MCP_URL", "http://repository-mcp:8000/mcp"),
         git_mcp_url=os.environ.get("GIT_MCP_URL", "http://git-mcp:8001/mcp"),
         analysis_mcp_url=os.environ.get("ANALYSIS_MCP_URL", "http://analysis-mcp:8002/mcp"),
+        workspace_mcp_url=os.environ.get("WORKSPACE_MCP_URL", "http://workspace-mcp:8005/mcp"),
         agent_url=os.environ.get("AGENT_URL", "http://agent:8003"),
         imports_per_minute=_int_env("IMPORTS_PER_MINUTE", 10),
         analyses_per_minute=_int_env("ANALYSES_PER_MINUTE", 5),
@@ -60,4 +63,5 @@ def get_settings() -> Settings:
         max_concurrent_imports=_int_env("MAX_CONCURRENT_IMPORTS", 2),
         max_analysis_jobs=_int_env("MAX_ANALYSIS_JOBS", 3),
         max_body_bytes=_int_env("MAX_BODY_BYTES", 1_000_000),
+        analyzer_version=os.environ.get("ANALYZER_VERSION", "0.5.0"),
     )

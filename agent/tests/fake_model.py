@@ -15,6 +15,8 @@ class ScriptedModel:
     async def decide(self, question: str, repository_id: str, observations: list[dict], tool_names: list[str]) -> dict:
         names = set(tool_names)
         kind = _kind(question)
+        if kind == "comment":
+            return _comment(repository_id, observations, names)
         if kind == "injection":
             return _injection(repository_id, observations, names)
         if kind == "overview":
@@ -23,6 +25,8 @@ class ScriptedModel:
             return _missing(question, repository_id, observations, names)
         if kind == "recent":
             return _recent(repository_id, observations, names)
+        if kind == "express":
+            return _express(repository_id, observations, names)
         return _route(question, repository_id, observations, names)
 
 
@@ -34,6 +38,8 @@ def _kind(question: str) -> str:
     if all(position >= 0 for position in positions) and positions == sorted(positions):
         return "route"
     lowered = question.lower()
+    if "reviewed" in lowered and "app/main.py" in lowered:
+        return "comment"
     if "notes.txt" in lowered:
         return "injection"
     if "overview" in lowered or "what is this" in lowered:
@@ -42,9 +48,30 @@ def _kind(question: str) -> str:
         return "missing"
     if "recent" in lowered or "commit" in lowered:
         return "recent"
+    if "express" in lowered and "/notes" in question:
+        return "express"
     if _METHOD.search(question) and _PATH.search(question):
         return "route"
     return "overview"
+
+
+_COMMENT_DIFF = """--- a/app/main.py
++++ b/app/main.py
+@@ -1,1 +1,2 @@
++# reviewed
+ from fastapi import FastAPI
+"""
+
+
+def _comment(repository_id: str, observations: list[dict], names: set[str]) -> dict:
+    """Propose the comment. Applying it stays with the repository owner."""
+    if observations or "propose_patch" not in names:
+        return {"answer": "The comment is proposed. The file changes after approval.", "claims": []}
+    return {
+        "tool_calls": [
+            {"name": "propose_patch", "arguments": {"repository_id": repository_id, "diff": _COMMENT_DIFF}}
+        ]
+    }
 
 
 def _injection(repository_id: str, observations: list[dict], names: set[str]) -> dict:
@@ -84,6 +111,16 @@ def _recent(repository_id: str, observations: list[dict], names: set[str]) -> di
     if observations or "get_commits" not in names:
         return {"answer": "Recent history is limited to the commits the tool returned.", "claims": []}
     return {"tool_calls": [{"name": "get_commits", "arguments": {"repository_id": repository_id}}]}
+
+
+def _express(repository_id: str, observations: list[dict], names: set[str]) -> dict:
+    """The Express route question searches, then reads the file the match cites."""
+    read_done = any(item.get("tool") == "read_file" for item in observations)
+    if not observations and "search_symbols" in names:
+        return {"tool_calls": [{"name": "search_symbols", "arguments": {"repository_id": repository_id, "query": "notes"}}]}
+    if not read_done and "read_file" in names:
+        return {"tool_calls": [{"name": "read_file", "arguments": {"repository_id": repository_id, "path": _file(observations) or "app.js"}}]}
+    return {"answer": "The route is in app.js. The answer cites that file.", "claims": []}
 
 
 def _route(question: str, repository_id: str, observations: list[dict], names: set[str]) -> dict:

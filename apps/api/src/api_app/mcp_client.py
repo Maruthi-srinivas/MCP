@@ -12,6 +12,10 @@ _TOOLS = {
     "search_code": "repository",
     "read_file": "repository",
     "analyze_code": "analysis",
+    "search_symbols": "analysis",
+    "propose_patch": "workspace",
+    "preview_patch": "workspace",
+    "apply_patch": "workspace",
 }
 
 
@@ -21,6 +25,7 @@ def _servers() -> list[tuple[str, str]]:
         ("repository-mcp", settings.repository_mcp_url),
         ("git-mcp", settings.git_mcp_url),
         ("analysis-mcp", settings.analysis_mcp_url),
+        ("workspace-mcp", settings.workspace_mcp_url),
     ]
 
 
@@ -28,6 +33,8 @@ def _url(server: str) -> str:
     settings = get_settings()
     if server == "analysis":
         return settings.analysis_mcp_url
+    if server == "workspace":
+        return settings.workspace_mcp_url
     return settings.repository_mcp_url
 
 

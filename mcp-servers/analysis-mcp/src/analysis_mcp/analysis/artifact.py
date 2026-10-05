@@ -8,10 +8,12 @@ from investigator_shared.paths import repository_root
 from investigator_shared.registry import get_repository, require_repository_id, workspace_root
 
 from analysis_mcp.analysis import database, endpoints, entrypoints, external, graph, symbols
+from analysis_mcp.analysis.embed import embed_texts, line_snippet
+from analysis_mcp.analysis.vectors import store
 from analysis_mcp.analysis.walk import parse_sources
 from analysis_mcp.config import Settings, get_settings
 
-ANALYZER_VERSION = "0.4.0"
+ANALYZER_VERSION = "0.5.0"
 
 
 def analysis_path(repository_id: str) -> Path:
@@ -30,6 +32,8 @@ def ensure_artifact(repository_id: str) -> dict:
         return cached
     root = repository_root(repository_id)
     built = build_artifact(root, commit_sha, get_settings(), time.monotonic())
+    _attach_embeddings(root, built)
+    store(repository_id, built.get("embeddings") or [])
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".json.tmp")
     temporary.write_text(json.dumps(built, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -39,7 +43,7 @@ def ensure_artifact(repository_id: str) -> dict:
 
 def build_artifact(root: Path, commit_sha: str, settings: Settings, started: float) -> dict:
     """Parse the checkout and return a stable document. Caps set truncated and stop that list."""
-    parsed, warnings, truncated = parse_sources(root, settings, started)
+    parsed, extra, warnings, truncated = parse_sources(root, settings, started)
     functions: list[dict] = []
     classes: list[dict] = []
     imports: list[dict] = []
@@ -58,6 +62,11 @@ def build_artifact(root: Path, commit_sha: str, settings: Settings, started: flo
         services.extend(external.collect(tree, path))
         entrypoint_rows.extend(entrypoints.collect(tree, path))
         calls.extend(graph.collect_calls(tree, path))
+    functions.extend(extra["functions"])
+    classes.extend(extra["classes"])
+    imports.extend(extra["imports"])
+    endpoint_rows.extend(extra["endpoints"])
+    calls.extend(extra["calls"])
 
     capped = False
     functions, cut = _sort_cap(functions, lambda item: (item["path"], item["line"], item["name"], item["kind"]), settings.max_functions)
@@ -78,6 +87,7 @@ def build_artifact(root: Path, commit_sha: str, settings: Settings, started: flo
         warnings.append({"path": ".", "message": "A collection reached its cap. Later items were omitted."})
 
     files = {path for path, _tree in parsed}
+    files.update(item["path"] for item in functions + classes + imports)
     nodes, edges, edges_cut = graph.build(functions, imports, calls, files, settings.max_edges)
     truncated = truncated or edges_cut
     if edges_cut:
@@ -127,6 +137,34 @@ def page_items(items: list[dict], page: int, page_size: int) -> tuple[list[dict]
     start = (page - 1) * page_size
     window = items[start : start + page_size + 1]
     return window[:page_size], len(window) > page_size
+
+
+def _attach_embeddings(root: Path, artifact: dict) -> None:
+    """One vector per function and class. The architecture resource leaves this list out."""
+    rows: list[dict] = []
+    seen: set[tuple] = set()
+    for item in artifact["functions"] + artifact["classes"]:
+        kind = item.get("kind") or "class"
+        key = (item["path"], item["name"], item["line"], kind)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(
+            {
+                "name": item["name"],
+                "kind": kind,
+                "path": item["path"],
+                "start_line": item["line"],
+                "snippet": line_snippet(root, item["path"], item["line"]),
+            }
+        )
+    if not rows:
+        artifact["embeddings"] = []
+        return
+    vectors = embed_texts([f"{row['name']} {row['snippet']}" for row in rows])
+    for row, vector in zip(rows, vectors):
+        row["vector"] = vector
+    artifact["embeddings"] = rows
 
 
 def _sort_cap(items: list[dict], key, limit: int) -> tuple[list[dict], bool]:

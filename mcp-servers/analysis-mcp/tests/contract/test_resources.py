@@ -55,5 +55,6 @@ def test_prompts_are_listed_and_trace_api_names_tools_in_order():
     positions = [text.find(name) for name in _TOOLS]
     assert positions == sorted(positions)
     assert all(position >= 0 for position in positions)
+    assert text.find("search_symbols") < text.find("search_code")
     source = Path(__file__).parents[2].joinpath("src", "analysis_mcp", "prompts.py").read_text(encoding="utf-8")
     assert "/users" not in source

@@ -14,6 +14,7 @@ from starlette.routing import Mount, Route
 from investigator_shared.secrets import install_redacting_logs
 
 from analysis_mcp.config import get_settings
+from analysis_mcp.metrics import snapshot as metrics_snapshot
 from analysis_mcp.prompts import register as register_prompts
 from analysis_mcp.resources import register as register_resources
 from analysis_mcp.tools.analyze_code import analyze_code
@@ -25,6 +26,7 @@ from analysis_mcp.tools.detect_external_services import detect_external_services
 from analysis_mcp.tools.find_classes import find_classes
 from analysis_mcp.tools.find_functions import find_functions
 from analysis_mcp.tools.find_imports import find_imports
+from analysis_mcp.tools.search_symbols import search_symbols
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 install_redacting_logs()
@@ -67,6 +69,7 @@ mcp.tool()(detect_entrypoints)
 mcp.tool()(detect_api_endpoints)
 mcp.tool()(detect_database_access)
 mcp.tool()(detect_external_services)
+mcp.tool()(search_symbols)
 
 register_resources(mcp)
 register_prompts(mcp)
@@ -75,6 +78,11 @@ register_prompts(mcp)
 async def health(_: Request) -> JSONResponse:
     """Process health for Compose. This is not an MCP tool."""
     return JSONResponse({"status": "ok", "service": "analysis-mcp"})
+
+
+async def metrics(_: Request) -> JSONResponse:
+    """Counters and histograms for this process. A restart clears them."""
+    return JSONResponse(metrics_snapshot())
 
 
 @contextlib.asynccontextmanager
@@ -86,6 +94,7 @@ async def lifespan(_: Starlette):
 app = Starlette(
     routes=[
         Route("/health", endpoint=health, methods=["GET"]),
+        Route("/metrics", endpoint=metrics, methods=["GET"]),
         Mount("/", app=mcp.streamable_http_app()),
     ],
     lifespan=lifespan,

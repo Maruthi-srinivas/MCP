@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
-import { asError, request, type Overview as OverviewBody } from "../api";
+import { useEffect, useState, type FormEvent } from "react";
+import { Link, useParams } from "react-router-dom";
+import { asError, request, type Overview as OverviewBody, type SymbolMatch } from "../api";
 import { Ask } from "../Ask";
 import { RepoNav } from "../RepoNav";
 import "./Overview.css";
@@ -9,12 +9,25 @@ export function Overview() {
   const { repositoryId = "" } = useParams();
   const [body, setBody] = useState<OverviewBody | null>(null);
   const [error, setError] = useState("");
+  const [query, setQuery] = useState("");
+  const [matches, setMatches] = useState<SymbolMatch[]>([]);
+  const [searchError, setSearchError] = useState("");
 
   useEffect(() => {
     request<OverviewBody>(`/repositories/${repositoryId}/overview`)
       .then(setBody)
       .catch((caught) => setError(asError(caught).message));
   }, [repositoryId]);
+
+  function onSearch(event: FormEvent) {
+    event.preventDefault();
+    setSearchError("");
+    request<{ matches: SymbolMatch[] }>(
+      `/repositories/${repositoryId}/search?q=${encodeURIComponent(query)}`,
+    )
+      .then((result) => setMatches(result.matches))
+      .catch((caught) => setSearchError(asError(caught).message));
+  }
 
   return (
     <main>
@@ -55,6 +68,27 @@ export function Overview() {
           </section>
         </div>
       ) : null}
+      <form className="ask" onSubmit={onSearch}>
+        <label>
+          Symbol search
+          <input value={query} onChange={(event) => setQuery(event.target.value)} />
+        </label>
+        <button type="submit">Search</button>
+      </form>
+      {searchError ? <p className="error">{searchError}</p> : null}
+      <ul>
+        {matches.map((item) => (
+          <li key={`${item.path}:${item.line}:${item.name}`}>
+            <Link to={`/repos/${repositoryId}/file?path=${encodeURIComponent(item.path)}&line=${item.line}`}>
+              {item.name}
+            </Link>
+            <span>
+              {" "}
+              {item.path}:{item.line}
+            </span>
+          </li>
+        ))}
+      </ul>
       <Ask repositoryId={repositoryId} />
     </main>
   );

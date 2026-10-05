@@ -21,6 +21,7 @@ class Settings:
     repository_mcp_url: str
     git_mcp_url: str
     analysis_mcp_url: str
+    workspace_mcp_url: str
     max_steps: int
     max_tool_calls: int
     max_tool_output_chars: int
@@ -38,6 +39,7 @@ def get_settings() -> Settings:
         repository_mcp_url=os.environ.get("REPOSITORY_MCP_URL", "http://repository-mcp:8000/mcp"),
         git_mcp_url=os.environ.get("GIT_MCP_URL", "http://git-mcp:8001/mcp"),
         analysis_mcp_url=os.environ.get("ANALYSIS_MCP_URL", "http://analysis-mcp:8002/mcp"),
+        workspace_mcp_url=os.environ.get("WORKSPACE_MCP_URL", "http://workspace-mcp:8005/mcp"),
         max_steps=_int_env("MAX_STEPS", 8),
         max_tool_calls=_int_env("MAX_TOOL_CALLS", 12),
         max_tool_output_chars=_int_env("MAX_TOOL_OUTPUT_CHARS", 4000),

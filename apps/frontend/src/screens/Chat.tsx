@@ -11,10 +11,18 @@ import {
 import { RepoNav } from "../RepoNav";
 import "./Chat.css";
 
+type Proposal = {
+  proposal_id: string;
+  status: string;
+  diff: string;
+  files: string[];
+};
+
 export function Chat() {
   const { repositoryId = "", sessionId = "" } = useParams();
   const [session, setSession] = useState<Investigation | null>(null);
   const [trace, setTrace] = useState<TraceRow[]>([]);
+  const [proposals, setProposals] = useState<Proposal[]>([]);
   const [question, setQuestion] = useState("");
   const [pending, setPending] = useState(true);
   const [error, setError] = useState("");
@@ -32,8 +40,10 @@ export function Chat() {
           setError(`${body.job.error_code || "INTERNAL_ERROR"}: The investigation failed.`);
         }
         const listed = await request<{ trace: TraceRow[] }>(`/investigations/${sessionId}/trace`);
+        const proposed = await request<{ proposals: Proposal[] }>(`/investigations/${sessionId}/proposals`);
         if (!cancelled) {
           setTrace(listed.trace);
+          setProposals(proposed.proposals);
         }
       })
       .catch((caught) => {
@@ -64,7 +74,9 @@ export function Chat() {
       const body = await waitForInvestigation(sessionId);
       setSession(body);
       const listed = await request<{ trace: TraceRow[] }>(`/investigations/${sessionId}/trace`);
+      const proposed = await request<{ proposals: Proposal[] }>(`/investigations/${sessionId}/proposals`);
       setTrace(listed.trace);
+      setProposals(proposed.proposals);
       if (body.job?.status === "failed") {
         setError(`${body.job.error_code || "INTERNAL_ERROR"}: The investigation failed.`);
       }
@@ -73,6 +85,21 @@ export function Chat() {
       setError(`${failure.code}: ${failure.message}`);
     } finally {
       setPending(false);
+    }
+  }
+
+  async function decide(proposalId: string, action: "approve" | "reject" | "apply") {
+    setError("");
+    try {
+      await request(`/investigations/${sessionId}/proposals/${proposalId}/${action}`, {
+        method: "POST",
+        body: "{}",
+      });
+      const proposed = await request<{ proposals: Proposal[] }>(`/investigations/${sessionId}/proposals`);
+      setProposals(proposed.proposals);
+    } catch (caught) {
+      const failure = asError(caught);
+      setError(`${failure.code}: ${failure.message}`);
     }
   }
 
@@ -97,6 +124,29 @@ export function Chat() {
             </p>
           ))}
         </article>
+      ))}
+      {proposals.map((proposal) => (
+        <section key={proposal.proposal_id} className="proposal">
+          <h2>Proposed change</h2>
+          <p>{proposal.files.join(", ")}</p>
+          <pre className="diff">{proposal.diff}</pre>
+          <button type="button" disabled={proposal.status !== "proposed"} onClick={() => void decide(proposal.proposal_id, "approve")}>
+            Approve
+          </button>
+          <button type="button" disabled={proposal.status !== "proposed"} onClick={() => void decide(proposal.proposal_id, "reject")}>
+            Reject
+          </button>
+          <button type="button" disabled={proposal.status !== "approved"} onClick={() => void decide(proposal.proposal_id, "apply")}>
+            Apply
+          </button>
+          {proposal.status === "applied" && proposal.files[0] ? (
+            <p>
+              <Link to={`/repos/${repositoryId}/file?path=${encodeURIComponent(proposal.files[0])}&line=1`}>
+                {proposal.files[0]}
+              </Link>
+            </p>
+          ) : null}
+        </section>
       ))}
       <form onSubmit={onSubmit}>
         <label>

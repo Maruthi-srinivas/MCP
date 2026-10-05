@@ -6,6 +6,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from api_app import db, jobs
+from api_app.mcp_client import call_tool
 
 router = APIRouter()
 
@@ -101,6 +102,70 @@ async def trace(session_id: str, request: Request):
             }
         )
     return {"session_id": session_id, "trace": rows}
+
+
+@router.get("/investigations/{session_id}/proposals")
+async def list_proposals(session_id: str, request: Request):
+    session = _owned_session(session_id, request.state.caller_id)
+    if isinstance(session, JSONResponse):
+        return session
+    return {"session_id": session_id, "proposals": db.list_proposals(session_id)}
+
+
+@router.post("/investigations/{session_id}/proposals/{proposal_id}/approve")
+async def approve(session_id: str, proposal_id: str, request: Request):
+    session = _owned_session(session_id, request.state.caller_id)
+    if isinstance(session, JSONResponse):
+        return session
+    updated = db.approve_proposal(proposal_id, session_id, request.state.caller_id, str(uuid.uuid4()))
+    if updated is None:
+        return _proposal_conflict(session_id, proposal_id)
+    return updated
+
+
+@router.post("/investigations/{session_id}/proposals/{proposal_id}/reject")
+async def reject(session_id: str, proposal_id: str, request: Request):
+    session = _owned_session(session_id, request.state.caller_id)
+    if isinstance(session, JSONResponse):
+        return session
+    updated = db.reject_proposal(proposal_id, session_id, request.state.caller_id)
+    if updated is None:
+        return _proposal_conflict(session_id, proposal_id)
+    return updated
+
+
+@router.post("/investigations/{session_id}/proposals/{proposal_id}/apply")
+async def apply(session_id: str, proposal_id: str, request: Request):
+    session = _owned_session(session_id, request.state.caller_id)
+    if isinstance(session, JSONResponse):
+        return session
+    row = db.get_proposal(proposal_id)
+    if row is None or row["session_id"] != session_id:
+        return _error(404, "PROPOSAL_NOT_FOUND", "Proposal was not found.", False)
+    result = await call_tool(
+        "apply_patch",
+        {"proposal_id": proposal_id, "approval_id": row["approval_id"]},
+    )
+    error = result.get("error") if isinstance(result, dict) else None
+    if error:
+        return _error(409, error.get("code") or "APPROVAL_REQUIRED", error.get("message") or "Apply failed.", False)
+    return result
+
+
+def _owned_session(session_id: str, caller_id: str):
+    session = db.get_session(session_id)
+    if session is None or session.get("caller_id") != caller_id:
+        return _error(404, "REPOSITORY_NOT_FOUND", "Unknown investigation.", False)
+    return session
+
+
+def _proposal_conflict(session_id: str, proposal_id: str) -> JSONResponse:
+    row = db.get_proposal(proposal_id)
+    if row is None or row["session_id"] != session_id:
+        return _error(404, "PROPOSAL_NOT_FOUND", "Proposal was not found.", False)
+    if row["status"] == "applied":
+        return _error(409, "ALREADY_APPLIED", "This proposal was already applied.", False)
+    return _error(409, "APPROVAL_REQUIRED", "This proposal cannot be approved.", False)
 
 
 def _error(status: int, code: str, message: str, retryable: bool) -> JSONResponse:

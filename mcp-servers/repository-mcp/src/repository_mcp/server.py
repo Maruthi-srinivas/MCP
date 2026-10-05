@@ -17,6 +17,7 @@ from starlette.routing import Mount, Route
 from investigator_shared.secrets import install_redacting_logs
 
 from repository_mcp.config import get_settings
+from repository_mcp.metrics import snapshot as metrics_snapshot
 from repository_mcp.prompts import register as register_prompts
 from repository_mcp.resources import register as register_resources
 from repository_mcp.tools.clone_repository import clone_repository
@@ -82,6 +83,11 @@ async def health(_: Request) -> JSONResponse:
     return JSONResponse({"status": "ok", "service": "repository-mcp"})
 
 
+async def metrics(_: Request) -> JSONResponse:
+    """Counters and histograms for this process. A restart clears them."""
+    return JSONResponse(metrics_snapshot())
+
+
 @contextlib.asynccontextmanager
 async def lifespan(_: Starlette):
     async with mcp.session_manager.run():
@@ -91,6 +97,7 @@ async def lifespan(_: Starlette):
 app = Starlette(
     routes=[
         Route("/health", endpoint=health, methods=["GET"]),
+        Route("/metrics", endpoint=metrics, methods=["GET"]),
         Mount("/", app=mcp.streamable_http_app()),
     ],
     lifespan=lifespan,

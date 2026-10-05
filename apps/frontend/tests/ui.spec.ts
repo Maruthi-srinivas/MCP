@@ -46,6 +46,35 @@ test("import, ask, trace, and open a cited file", async ({ page }) => {
   await expect(page.locator(".file")).toContainText("FastAPI");
 });
 
+test("approve a comment and open the new line", async ({ page }) => {
+  await signIn(page);
+  await page.getByRole("link", { name: /service_app/ }).click();
+  await page.getByLabel("Question").fill("Add the comment reviewed to app/main.py");
+  await page.getByRole("button", { name: "Ask" }).click();
+  await expect(page.getByRole("button", { name: "Approve" })).toBeVisible({ timeout: 120000 });
+  await expect(page.locator("pre.diff")).toContainText("# reviewed");
+  await page.getByRole("button", { name: "Approve" }).click();
+  await expect(page.getByRole("button", { name: "Apply" })).toBeEnabled();
+  await page.getByRole("button", { name: "Apply" }).click();
+  await page.getByRole("link", { name: "app/main.py" }).click();
+  await expect(page.locator(".file")).toContainText("# reviewed");
+});
+
+test("search cites a symbol after analysis", async ({ page }) => {
+  await signIn(page);
+  await page.getByRole("link", { name: /service_app/ }).click();
+  await page.getByRole("link", { name: "Jobs" }).click();
+  await page.getByRole("button", { name: "Run analysis" }).click();
+  await expect(page.getByText("succeeded").first()).toBeVisible({ timeout: 120000 });
+  await page.getByRole("link", { name: "Overview" }).click();
+  await page.getByLabel("Symbol search").fill("create_user");
+  await page.getByRole("button", { name: "Search" }).click();
+  const match = page.getByRole("link", { name: "create_user" });
+  await expect(match).toBeVisible({ timeout: 60000 });
+  await match.click();
+  await expect(page.locator(".file")).toBeVisible();
+});
+
 test("overview stacks on a narrow screen", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 800 });
   await signIn(page);

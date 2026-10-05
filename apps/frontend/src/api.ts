@@ -64,6 +64,8 @@ export type FileWindow = {
   total_lines: number;
 };
 
+export type SymbolMatch = { name: string; path: string; line: number; snippet: string };
+
 export type GraphNode = { id: string; kind: string; name: string; path: string; line: number };
 export type GraphEdge = {
   source: string;

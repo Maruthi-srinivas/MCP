@@ -111,6 +111,37 @@ services:
       retries: 12
       start_period: 15s
 
+  workspace-mcp:
+    build:
+      context: .
+      dockerfile: mcp-servers/workspace-mcp/Dockerfile
+    environment:
+      WORKSPACE_ROOT: /workspaces
+      HOST: 0.0.0.0
+      PORT: "8005"
+      DATABASE_URL: postgresql://investigator:investigator@postgres:5432/investigator
+      WRITE_ENABLED: ${WRITE_ENABLED:-0}
+      PATCH_PATH_PREFIX: ${PATCH_PATH_PREFIX:-}
+      MAX_PATCH_FILES: ${MAX_PATCH_FILES:-3}
+      MAX_PATCH_BYTES: ${MAX_PATCH_BYTES:-16384}
+    volumes:
+      - workspaces:/workspaces
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8005/health')",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+
   agent:
     build:
       context: .
@@ -123,6 +154,7 @@ services:
       REPOSITORY_MCP_URL: http://repository-mcp:8000/mcp
       GIT_MCP_URL: http://git-mcp:8001/mcp
       ANALYSIS_MCP_URL: http://analysis-mcp:8002/mcp
+      WORKSPACE_MCP_URL: http://workspace-mcp:8005/mcp
       MAX_STEPS: ${MAX_STEPS:-8}
       MAX_TOOL_CALLS: ${MAX_TOOL_CALLS:-12}
       MAX_TOOL_OUTPUT_CHARS: ${MAX_TOOL_OUTPUT_CHARS:-4000}
@@ -135,6 +167,8 @@ services:
       git-mcp:
         condition: service_healthy
       analysis-mcp:
+        condition: service_healthy
+      workspace-mcp:
         condition: service_healthy
     healthcheck:
       test:
@@ -150,7 +184,7 @@ services:
       start_period: 15s
 
   postgres:
-    image: postgres:16.6-bookworm
+    image: pgvector/pgvector:0.8.0-pg16
     environment:
       POSTGRES_USER: investigator
       POSTGRES_PASSWORD: investigator
@@ -188,6 +222,7 @@ services:
       REPOSITORY_MCP_URL: http://repository-mcp:8000/mcp
       GIT_MCP_URL: http://git-mcp:8001/mcp
       ANALYSIS_MCP_URL: http://analysis-mcp:8002/mcp
+      WORKSPACE_MCP_URL: http://workspace-mcp:8005/mcp
       AGENT_URL: http://agent:8003
       IMPORTS_PER_MINUTE: ${IMPORTS_PER_MINUTE:-10}
       ANALYSES_PER_MINUTE: ${ANALYSES_PER_MINUTE:-5}
@@ -213,6 +248,8 @@ services:
       analysis-mcp:
         condition: service_healthy
       agent:
+        condition: service_healthy
+      workspace-mcp:
         condition: service_healthy
     healthcheck:
       test:
@@ -272,6 +309,17 @@ services:
       WORKSPACE_ROOT: /tmp/test-workspaces
     command: ["pytest", "-q"]
 
+  workspace-tests:
+    profiles: ["test-workspace"]
+    build:
+      context: .
+      dockerfile: mcp-servers/workspace-mcp/Dockerfile
+    environment:
+      WORKSPACE_ROOT: /tmp/test-workspaces
+      WRITE_ENABLED: "1"
+      DATABASE_URL: ""
+    command: ["pytest", "-q"]
+
   agent-tests:
     profiles: ["test-agent"]
     build:
@@ -299,10 +347,13 @@ services:
         condition: service_healthy
       frontend:
         condition: service_healthy
+      workspace-mcp:
+        condition: service_healthy
     environment:
       SMOKE_BASE_URL: http://repository-mcp:8000
       GIT_SMOKE_BASE_URL: http://git-mcp:8001
       ANALYSIS_SMOKE_BASE_URL: http://analysis-mcp:8002
+      WORKSPACE_SMOKE_BASE_URL: http://workspace-mcp:8005
       AGENT_SMOKE_BASE_URL: http://agent:8003
       API_SMOKE_BASE_URL: http://api:8004
       FRONTEND_SMOKE_BASE_URL: http://frontend:3000

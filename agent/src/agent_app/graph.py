@@ -7,7 +7,10 @@ from typing import TypedDict
 
 from langgraph.graph import END, StateGraph
 
+from investigator_shared.secrets import log_event
+
 from agent_app.config import Settings
+from agent_app.metrics import increment, record
 from agent_app.evidence import absorb, claims_from_model, known_files
 from agent_app.trace import argument_hash, argument_summary, remember
 
@@ -15,6 +18,7 @@ from agent_app.trace import argument_hash, argument_summary, remember
 class LoopState(TypedDict, total=False):
     question: str
     repository_id: str
+    session_id: str
     commit_sha: str
     observations: list[dict]
     steps: int
@@ -31,6 +35,8 @@ def build_graph(hub, model, settings: Settings):
     """Compile the model node and the tool node. Callers invoke it once per question."""
 
     async def model_node(state: LoopState) -> dict:
+        increment("investigation_steps")
+        log_event("model_step", status="ok", repository_id=state.get("repository_id") or "")
         if _timed_out(state, settings):
             return _stop(state, "timeout", "The loop stopped because it reached the time limit.")
         if state.get("steps", 0) >= settings.max_steps:
@@ -66,7 +72,7 @@ def build_graph(hub, model, settings: Settings):
     async def tools_node(state: LoopState) -> dict:
         if _timed_out(state, settings):
             return _stop(state, "timeout", "The loop stopped because it reached the time limit.")
-        pending = state.get("pending") or []
+        pending = [_with_session(call, state.get("session_id") or "") for call in (state.get("pending") or [])]
         results = await asyncio.gather(*[_one(hub, call, settings) for call in pending])
         observations = list(state.get("observations") or [])
         evidence = list(state.get("evidence") or [])
@@ -78,13 +84,24 @@ def build_graph(hub, model, settings: Settings):
             rows, commit_sha = absorb(result, name, server, commit_sha)
             evidence.extend(rows)
             observations.append({"tool": name, "text": _clip(result, settings.max_tool_output_chars)})
+            record("tool_call", duration_ms, _status(result))
+            log_event(
+                "tool_call",
+                duration_ms=duration_ms,
+                status=_status(result),
+                repository_id=state.get("repository_id") or "",
+                tool=name,
+            )
+            arguments = dict(call.get("arguments") or {})
+            if name == "propose_patch" and isinstance(result, dict) and result.get("proposal_id"):
+                arguments["proposal_id"] = result["proposal_id"]
             trace.append(
                 {
                     "server": server,
                     "tool": name,
                     "status": _status(result),
                     "duration_ms": duration_ms,
-                    "arguments": argument_summary(call.get("arguments") or {}),
+                    "arguments": argument_summary(arguments),
                     "argument_hash": argument_hash(call.get("arguments") or {}),
                 }
             )
@@ -107,13 +124,22 @@ def build_graph(hub, model, settings: Settings):
     return graph.compile()
 
 
-async def run_investigation(question: str, repository_id: str, commit_sha: str, hub, model, settings: Settings) -> dict:
+async def run_investigation(
+    question: str,
+    repository_id: str,
+    commit_sha: str,
+    hub,
+    model,
+    settings: Settings,
+    session_id: str = "",
+) -> dict:
     """Run one bounded loop and return the public response fields."""
     app = build_graph(hub, model, settings)
     final = await app.ainvoke(
         {
             "question": question,
             "repository_id": repository_id,
+            "session_id": session_id,
             "commit_sha": commit_sha,
             "observations": [],
             "steps": 0,
@@ -132,6 +158,15 @@ async def run_investigation(question: str, repository_id: str, commit_sha: str, 
         "trace": final.get("trace") or [],
         "stopped_reason": final.get("stopped_reason") or "answered",
     }
+
+
+def _with_session(call: dict, session_id: str) -> dict:
+    """The model does not choose the session. The loop writes the real id."""
+    if call.get("name") != "propose_patch":
+        return call
+    arguments = dict(call.get("arguments") or {})
+    arguments["session_id"] = session_id
+    return {**call, "arguments": arguments}
 
 
 async def _one(hub, call: dict, settings: Settings) -> tuple[dict, dict, int]:

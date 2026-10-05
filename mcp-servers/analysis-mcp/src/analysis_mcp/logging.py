@@ -1,4 +1,4 @@
-"""One JSON log line per tool call. Arguments are not logged."""
+"""One key=value log line per tool call. Arguments are not logged."""
 
 import functools
 import logging
@@ -7,17 +7,11 @@ import uuid
 from collections.abc import Callable
 
 from investigator_shared.errors import ToolFailure, error_body
+from investigator_shared.secrets import log_event
+
+from analysis_mcp.metrics import record
 
 logger = logging.getLogger("analysis_mcp")
-
-
-def _result_items(result: dict) -> int:
-    if "error" in result:
-        return 0
-    for key in ("functions", "classes", "imports", "endpoints", "hints", "services", "entrypoints", "edges", "nodes"):
-        if key in result:
-            return len(result[key])
-    return 1
 
 
 def observed_tool(fn: Callable) -> Callable:
@@ -30,27 +24,34 @@ def observed_tool(fn: Callable) -> Callable:
         try:
             result = fn(*args, **kwargs)
         except ToolFailure as failure:
-            _log(fn.__name__, request_id, started, "error", 0, failure.code)
+            _log(fn.__name__, request_id, started, "error", failure.code, args, kwargs)
             return error_body(failure, request_id)
         except Exception:
-            _log(fn.__name__, request_id, started, "error", 0, "INTERNAL_ERROR")
+            _log(fn.__name__, request_id, started, "error", "INTERNAL_ERROR", args, kwargs)
             logger.exception("tool %s failed", fn.__name__)
             return error_body(ToolFailure("INTERNAL_ERROR", "Unexpected server error.", False), request_id)
-        _log(fn.__name__, request_id, started, "success", _result_items(result), None)
+        _log(fn.__name__, request_id, started, "success", None, args, kwargs)
         return result
 
     return wrapper
 
 
-def _log(tool: str, request_id: str, started: float, status: str, result_items: int, error_code: str | None) -> None:
-    payload = {
-        "request_id": request_id,
-        "mcp_server": "analysis-mcp",
-        "tool": tool,
-        "duration_ms": int((time.perf_counter() - started) * 1000),
-        "status": status,
-        "result_items": result_items,
-    }
-    if error_code:
-        payload["error_code"] = error_code
-    logger.info("%s", payload)
+def _log(tool, request_id, started, status, error_code, args, kwargs) -> None:
+    duration_ms = int((time.perf_counter() - started) * 1000)
+    record(tool, duration_ms, status)
+    if tool == "analyze_code":
+        record("analysis", duration_ms, status)
+    repository_id = ""
+    if kwargs.get("repository_id"):
+        repository_id = str(kwargs["repository_id"])
+    elif args:
+        repository_id = str(args[0])
+    log_event(
+        "tool_call",
+        duration_ms=duration_ms,
+        status=status,
+        request_id=request_id,
+        repository_id=repository_id,
+        tool=tool,
+        error_code=error_code,
+    )

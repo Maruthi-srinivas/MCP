@@ -13,6 +13,8 @@ _TOOLS = {
     "detect_project_type": "repository-mcp",
     "get_commits": "git-mcp",
     "detect_database_access": "analysis-mcp",
+    "search_symbols": "analysis-mcp",
+    "propose_patch": "workspace-mcp",
 }
 
 COMMIT = "a" * 40
@@ -41,7 +43,7 @@ class FakeMcp:
         endpoint = str((arguments or {}).get("endpoint") or "")
         return (
             "Trace one HTTP endpoint. Cite file and line from tool results. "
-            "Call these tools in order: search_code, find_symbol, read_file, "
+            "Call these tools in order: search_symbols, search_code, find_symbol, read_file, "
             "find_references, detect_database_access. "
             f"The endpoint path is {endpoint}."
         )
@@ -60,10 +62,21 @@ class FakeMcp:
 
 def _result(name: str, arguments: dict) -> dict:
     repository_id = arguments.get("repository_id") or "repo_from_clone"
+    if name == "propose_patch":
+        return {
+            "proposal_id": "11111111-1111-1111-1111-111111111111",
+            "status": "proposed",
+            "files": ["app/main.py"],
+        }
     if name == "clone_repository":
         return {"repository_id": "repo_from_clone", "resolved_commit": COMMIT, "status": "ready"}
     if name == "read_file" and "missing" in str(arguments.get("path") or ""):
         return {"error": {"code": "FILE_NOT_FOUND", "message": "File was not found.", "retryable": False}}
+    if name == "search_symbols":
+        return {
+            "repository_id": repository_id,
+            "matches": [{"name": "reachDatabase", "path": "app.js", "line": 6, "snippet": "function reachDatabase() {"}],
+        }
     if name == "search_code":
         return {
             "repository_id": repository_id,

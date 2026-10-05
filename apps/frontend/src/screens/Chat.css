@@ -9,6 +9,16 @@
   margin: 12px 0;
 }
 
+.diff {
+  white-space: pre-wrap;
+  background: #f5f5f4;
+  padding: 8px 12px;
+}
+
+.proposal button {
+  margin-right: 8px;
+}
+
 .evidence {
   background: #ecfdf5;
   border-left: 4px solid #047857;
