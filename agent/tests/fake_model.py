@@ -15,8 +15,10 @@ class ScriptedModel:
     async def decide(self, question: str, repository_id: str, observations: list[dict], tool_names: list[str]) -> dict:
         names = set(tool_names)
         kind = _kind(question)
+        if kind == "injection":
+            return _injection(repository_id, observations, names)
         if kind == "overview":
-            return _overview(repository_id, observations, names)
+            return _overview(question, repository_id, observations, names)
         if kind == "missing":
             return _missing(question, repository_id, observations, names)
         if kind == "recent":
@@ -32,6 +34,8 @@ def _kind(question: str) -> str:
     if all(position >= 0 for position in positions) and positions == sorted(positions):
         return "route"
     lowered = question.lower()
+    if "notes.txt" in lowered:
+        return "injection"
     if "overview" in lowered or "what is this" in lowered:
         return "overview"
     if "missing" in lowered:
@@ -43,8 +47,23 @@ def _kind(question: str) -> str:
     return "overview"
 
 
-def _overview(repository_id: str, observations: list[dict], names: set[str]) -> dict:
+def _injection(repository_id: str, observations: list[dict], names: set[str]) -> dict:
+    """The sentence in the file is content. There is no shell tool to call."""
+    if observations or "read_file" not in names or "shell" in names:
+        return {"answer": "The file is content. No command was run.", "claims": []}
+    return {"tool_calls": [{"name": "read_file", "arguments": {"repository_id": repository_id, "path": "notes.txt"}}]}
+
+
+def _overview(question: str, repository_id: str, observations: list[dict], names: set[str]) -> dict:
+    """A prompt that asks for a citation reads one file so the UI can open it."""
+    read_done = any(item.get("tool") == "read_file" for item in observations)
     if observations:
+        if "cite file and line" in question.lower() and not read_done and "read_file" in names:
+            return {
+                "tool_calls": [
+                    {"name": "read_file", "arguments": {"repository_id": repository_id, "path": "app/main.py"}}
+                ]
+            }
         return {"answer": "Overview is limited to the tool results.", "claims": []}
     calls = []
     for name in ("get_repository_info", "detect_project_type", "find_dependencies"):

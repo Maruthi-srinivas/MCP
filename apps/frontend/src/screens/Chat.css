@@ -1,0 +1,36 @@
+.interpretation {
+  background: #fff7ed;
+  border-left: 4px solid #c2410c;
+  padding: 8px 12px;
+  margin: 12px 0;
+}
+
+.user-message {
+  margin: 12px 0;
+}
+
+.evidence {
+  background: #ecfdf5;
+  border-left: 4px solid #047857;
+  padding: 8px 12px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+td {
+  border-bottom: 1px solid #e7e5e4;
+  padding: 6px 4px;
+  vertical-align: top;
+}
+
+@media (max-width: 720px) {
+  table,
+  tbody,
+  tr,
+  td {
+    display: block;
+  }
+}

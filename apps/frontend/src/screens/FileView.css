@@ -1,0 +1,16 @@
+.file {
+  background: white;
+  border: 1px solid #e7e5e4;
+  padding: 12px 12px 12px 40px;
+  overflow-x: auto;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 14px;
+}
+
+.file-line {
+  white-space: pre;
+}
+
+.cited {
+  background: #ecfdf5;
+}

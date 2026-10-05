@@ -1,5 +1,8 @@
 """In-memory trace for this process. Full storage is a later version."""
 
+import hashlib
+import json
+
 _STEPS: list[dict] = []
 
 
@@ -13,6 +16,12 @@ def remember(steps: list[dict], limit: int) -> None:
 
 def recent() -> list[dict]:
     return list(_STEPS)
+
+
+def argument_hash(arguments: dict) -> str:
+    """sha256 of the raw arguments. The hex digest is safe to store and return."""
+    raw = json.dumps(arguments, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
 
 
 def argument_summary(arguments: dict) -> dict:

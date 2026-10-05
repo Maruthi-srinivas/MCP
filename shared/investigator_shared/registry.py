@@ -1,4 +1,8 @@
-"""Read-only lookup of the workspace registry. Writes stay in Repository MCP."""
+"""Lookup of one repository record.
+
+Writes stay in Repository MCP. When DATABASE_URL is set, the row lives in
+PostgreSQL. Otherwise the record stays in registry.json on the workspace volume.
+"""
 
 import fcntl
 import json
@@ -29,6 +33,31 @@ def require_repository_id(repository_id: str) -> str:
 def get_repository(repository_id: str) -> dict[str, Any]:
     """Return the stored record or raise REPOSITORY_NOT_FOUND."""
     require_repository_id(repository_id)
+    database_url = os.environ.get("DATABASE_URL", "").strip()
+    if database_url:
+        return _repository_from_postgres(repository_id, database_url)
+    return _repository_from_file(repository_id)
+
+
+def _repository_from_postgres(repository_id: str, database_url: str) -> dict[str, Any]:
+    import psycopg
+    from psycopg.rows import dict_row
+
+    with psycopg.connect(database_url, row_factory=dict_row) as connection:
+        row = connection.execute(
+            """
+            SELECT repository_id, url, owner, name, ref, resolved_commit, workspace_path, status
+            FROM repositories
+            WHERE repository_id = %s
+            """,
+            (repository_id,),
+        ).fetchone()
+    if row is None:
+        raise ToolFailure("REPOSITORY_NOT_FOUND", "Unknown repository_id.", False)
+    return dict(row)
+
+
+def _repository_from_file(repository_id: str) -> dict[str, Any]:
     path = registry_path()
     if not path.exists():
         raise ToolFailure("REPOSITORY_NOT_FOUND", "Unknown repository_id.", False)

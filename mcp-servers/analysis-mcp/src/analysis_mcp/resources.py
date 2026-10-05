@@ -22,6 +22,8 @@ def read_architecture(repository_id: str) -> str:
         "analyzer_version": artifact["analyzer_version"],
         "nodes": artifact["nodes"],
         "edges": artifact["edges"],
+        "entrypoints": artifact["entrypoints"],
+        "external_services": artifact["external_services"],
         "truncated": artifact["truncated"],
     }
     return dump_resource(payload, get_settings().resource_max_chars)

@@ -12,8 +12,8 @@ From this directory:
 docker compose up --build
 ```
 
-- MCP endpoint: `http://127.0.0.1:8000/mcp`
-- Health check: `http://127.0.0.1:8000/health`
+- UI: `http://127.0.0.1:3000` then `/login`
+- API health check: `http://127.0.0.1:8004/health`
 
 Optional settings live in [.env.example](.env.example). Compose picks them up if you copy that file to `.env`. A `GITHUB_TOKEN` is optional. Git uses it only as an HTTP header inside the container. Tools never return it, and logs never include it.
 
@@ -88,7 +88,7 @@ Errors look like this:
 }
 ```
 
-Codes in this version: `INVALID_REPOSITORY_URL`, `REPOSITORY_NOT_FOUND`, `CLONE_FAILED`, `INVALID_PATH`, `FILE_NOT_FOUND`, `FILE_TOO_LARGE`, `TOOL_TIMEOUT`, `GITHUB_RATE_LIMIT`, `INTERNAL_ERROR`, `SYMBOL_NOT_FOUND`, `UNSUPPORTED_LANGUAGE`, `GIT_REF_NOT_FOUND`, `ANALYSIS_TIMEOUT`.
+Codes in this version: `INVALID_REPOSITORY_URL`, `REPOSITORY_NOT_FOUND`, `CLONE_FAILED`, `INVALID_PATH`, `FILE_NOT_FOUND`, `FILE_TOO_LARGE`, `TOOL_TIMEOUT`, `GITHUB_RATE_LIMIT`, `INTERNAL_ERROR`, `SYMBOL_NOT_FOUND`, `UNSUPPORTED_LANGUAGE`, `GIT_REF_NOT_FOUND`, `ANALYSIS_TIMEOUT`, `UNAUTHORIZED`, `QUOTA_EXCEEDED`.
 
 ## Limits
 
@@ -121,6 +121,16 @@ Codes in this version: `INVALID_REPOSITORY_URL`, `REPOSITORY_NOT_FOUND`, `CLONE_
 | `AGENT_TIMEOUT_SECONDS` | 60 |
 | `MAX_RETRIES` | 2 |
 | `RESOURCE_MAX_CHARS` | 8000 |
+| `IMPORTS_PER_MINUTE` | 10 |
+| `ANALYSES_PER_MINUTE` | 5 |
+| `WORKSPACE_TTL_SECONDS` | 604800 |
+| `CACHE_TTL_SECONDS` | 3600 |
+| `MAX_FILE_ROWS` | 2000 |
+| `ALICE_TOKEN` | alice-local-token |
+| `BOB_TOKEN` | bob-local-token |
+| `MAX_CONCURRENT_IMPORTS` | 2 |
+| `MAX_ANALYSIS_JOBS` | 3 |
+| `MAX_BODY_BYTES` | 1000000 |
 
 A file larger than `MAX_FILE_BYTES` is refused with `FILE_TOO_LARGE`. A read that asks for more than `MAX_READ_LINES` returns the first allowed lines and `"truncated": true`.
 
@@ -184,6 +194,36 @@ V0.6 adds read-only JSON resources and reusable prompts. A resource is one docum
 
 Metadata, structure, and dependencies stay on repository-mcp. Architecture and endpoints stay on analysis-mcp. git-mcp has `investigate_change` and no resources.
 
+## How an import is stored
+
+V0.7 adds `postgres`, `redis`, and `api` on port 8004. Postgres and Redis are not published to the host. MCP tools still read the workspace volume. They do not open Redis.
+
+1. `POST /repositories` is handled in [apps/api/src/api_app/routes/repositories.py](apps/api/src/api_app/routes/repositories.py). An `Idempotency-Key` header returns the original job. The route enqueues work and returns.
+2. [apps/api/src/api_app/jobs.py](apps/api/src/api_app/jobs.py) calls `clone_repository`. The MCP servers allow the Compose host names in the `Host` header so that call is accepted. [mcp-servers/repository-mcp/src/repository_mcp/workspace/registry.py](mcp-servers/repository-mcp/src/repository_mcp/workspace/registry.py) upserts the `repositories` row when `DATABASE_URL` is set. The columns are created by [apps/api/migrations/001_tables.sql](apps/api/migrations/001_tables.sql), applied by the API before it listens.
+3. The same job records file paths, symbols, and dependencies. File text stays on the `workspaces` volume.
+4. A second `POST /repositories/{id}/analyze` for the same commit is handled in [apps/api/src/api_app/cache.py](apps/api/src/api_app/cache.py). A hit logs `cache_hit` and does not call the analyzer again. The stored architecture matches the first run.
+
+`POST /investigations` enqueues a job and returns immediately. The job calls the existing agent loop and stores the answer, the evidence, and the trace. A prompt or a question still starts that loop. The API only stores the result. `GET /repositories/{id}/architecture` reads the stored artifact and does not start analysis.
+
+```bash
+docker compose --profile test-api run --rm api-tests
+```
+
+Set `ALLOW_LOCAL_GIT=1` and `AGENT_TEST_MODEL=scripted` for that command so the fixture import and the scripted investigation can run. `IMPORTS_PER_MINUTE=2` makes the rate-limit test finish on the third import.
+
+## How a page reads evidence
+
+V0.8 adds `frontend` on port 3000. Open `http://localhost:3000`. The browser calls the API on port 8004. It does not call an MCP server.
+
+1. The import form in [apps/frontend/src/screens/Home.tsx](apps/frontend/src/screens/Home.tsx) uses [apps/frontend/src/api.ts](apps/frontend/src/api.ts). That module posts to `POST /repositories` and polls the job until the repository is ready.
+2. [apps/api/src/api_app/jobs.py](apps/api/src/api_app/jobs.py) still clones and stores the rows. The overview reads those rows. It does not start analysis.
+3. An evidence link calls `GET /repositories/{id}/file`. That route calls the existing `read_file` tool, so the path rules and secret redaction stay on repository-mcp.
+4. A prompt button posts `POST /investigations`. The job runs the agent loop. The assistant message keeps the evidence, and the trace keeps the argument summary. Refreshing the chat URL reads that session back from Postgres.
+
+```bash
+ALLOW_LOCAL_GIT=1 AGENT_TEST_MODEL=scripted docker compose --profile test-frontend run --rm frontend-tests
+```
+
 ## Tests
 
 Tests run inside the image. Nothing is installed on the host.
@@ -193,19 +233,35 @@ docker compose --profile test run --rm tests
 docker compose --profile test-git run --rm git-tests
 docker compose --profile test-analysis run --rm analysis-tests
 docker compose --profile test-agent run --rm agent-tests
+ALLOW_LOCAL_GIT=1 AGENT_TEST_MODEL=scripted docker compose --profile test-api run --rm api-tests
+ALLOW_LOCAL_GIT=1 AGENT_TEST_MODEL=scripted docker compose --profile test-frontend run --rm frontend-tests
 ```
 
-Repository tests cover browse, search, and Python structure. Git tests use a three-commit fixture and do not contact GitHub. Analysis tests use a small FastAPI fixture with a database hint, an HTTP client call, and one file that does not parse. Agent tests use a scripted model and an in-process MCP stub, so they do not call OpenAI. The running repository server does not set `ALLOW_LOCAL_GIT`, so a non-GitHub URL is rejected.
+Repository tests cover browse, search, and Python structure. Git tests use a three-commit fixture and do not contact GitHub. Analysis tests use a small FastAPI fixture with a database hint, an HTTP client call, and one file that does not parse. Agent tests use a scripted model and an in-process MCP stub, so they do not call OpenAI. API tests import a local fixture through the running stack, then read the stored architecture and trace from Postgres. The running repository server does not set `ALLOW_LOCAL_GIT`, so a non-GitHub URL is rejected.
 
-After the three MCP servers and the agent are up, the health smoke test calls them over the Compose network:
+After the MCP servers, the agent, the API, and the frontend are up, the health smoke test calls them over the Compose network:
 
 ```bash
 docker compose --profile smoke run --rm smoke
 ```
 
+## How a login reaches a repository
+
+V0.9 adds two local bearer tokens. The database stores the caller id `alice` or `bob`. It does not store the token.
+
+1. [apps/frontend/src/screens/Login.tsx](apps/frontend/src/screens/Login.tsx) keeps the token in memory and [apps/frontend/src/api.ts](apps/frontend/src/api.ts) sends `Authorization: Bearer` on each call. A refresh drops the token and returns to `/login`.
+2. [apps/api/src/api_app/auth.py](apps/api/src/api_app/auth.py) maps `ALICE_TOKEN` and `BOB_TOKEN` to caller ids. A missing or unknown token is `401` with `UNAUTHORIZED`. `GET /me` returns the caller id.
+3. `POST /repositories` writes a `repository_access` row for that caller. List, overview, file, jobs, architecture, and investigations require that row. Someone else gets `404` with `REPOSITORY_NOT_FOUND`.
+4. A cited file goes through `GET /repositories/{id}/file`. The route rejects an absolute path, `..`, and `.git` with `INVALID_PATH`. `read_file` then redacts secrets with [shared/investigator_shared/secrets.py](shared/investigator_shared/secrets.py). The same function redacts log lines.
+5. The agent hashes the raw tool arguments in [agent/src/agent_app/trace.py](agent/src/agent_app/trace.py). The trace returns `argument_hash` and the short identifier summary. The raw argument map is not stored.
+
+The same request path covers traversal, huge files, malicious filenames, secret leakage, tool-argument injection, and expensive analysis. Concurrent imports stop at `MAX_CONCURRENT_IMPORTS` with `QUOTA_EXCEEDED`. A repository keeps at most `MAX_ANALYSIS_JOBS` analysis jobs. A body over `MAX_BODY_BYTES` is refused. When the agent stops because `MAX_TOOL_CALLS` was reached, the investigation job is `QUOTA_EXCEEDED`.
+
+The host browser reaches the UI on port 3000 and the API on port 8004. The MCP servers and the agent stay on the Compose network. The Inspector still uses `http://repository-mcp:8000/mcp`.
+
 ## What this version does not do
 
-PostgreSQL, Redis, accounts, and a web UI are later versions. JavaScript, TypeScript, Java, and Go are not parsed. analysis-mcp does not summarize the graph with a model. The agent does not write to a repository. git-mcp cannot commit, push, or check out a branch. See [VERSION_ROADMAP.md](VERSION_ROADMAP.md).
+SSO, OAuth, and write tools stay later. JavaScript, TypeScript, Java, and Go are not parsed. analysis-mcp does not summarize the graph with a model. The agent does not write to a repository. git-mcp cannot commit, push, or check out a branch. See [VERSION_ROADMAP.md](VERSION_ROADMAP.md).
 
 ## Logs and shutdown
 
@@ -214,6 +270,8 @@ docker compose logs -f repository-mcp
 docker compose logs -f git-mcp
 docker compose logs -f analysis-mcp
 docker compose logs -f agent
+docker compose logs -f api
+docker compose logs -f frontend
 docker compose down
 ```
 

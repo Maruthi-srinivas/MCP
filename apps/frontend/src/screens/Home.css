@@ -1,0 +1,18 @@
+.home form {
+  display: grid;
+  gap: 12px;
+  max-width: 520px;
+}
+
+.home ul {
+  list-style: none;
+  padding: 0;
+}
+
+.home li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid #e7e5e4;
+}

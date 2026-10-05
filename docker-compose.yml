@@ -3,8 +3,6 @@ services:
     build:
       context: .
       dockerfile: mcp-servers/repository-mcp/Dockerfile
-    ports:
-      - "8000:8000"
     environment:
       WORKSPACE_ROOT: /workspaces
       HOST: 0.0.0.0
@@ -21,9 +19,15 @@ services:
       INDEX_TIMEOUT_SECONDS: ${INDEX_TIMEOUT_SECONDS:-30}
       GIT_CLONE_DEPTH: ${GIT_CLONE_DEPTH:-50}
       RESOURCE_MAX_CHARS: ${RESOURCE_MAX_CHARS:-8000}
+      DATABASE_URL: postgresql://investigator:investigator@postgres:5432/investigator
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      ALLOW_LOCAL_GIT: ${ALLOW_LOCAL_GIT:-}
     volumes:
       - workspaces:/workspaces
+      - fixture-src:/fixtures
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -41,8 +45,6 @@ services:
     build:
       context: .
       dockerfile: mcp-servers/git-mcp/Dockerfile
-    ports:
-      - "8001:8001"
     environment:
       WORKSPACE_ROOT: /workspaces
       HOST: 0.0.0.0
@@ -52,8 +54,12 @@ services:
       MAX_PAGE_SIZE: ${MAX_PAGE_SIZE:-50}
       MAX_DIFF_LINES: ${MAX_DIFF_LINES:-200}
       MAX_BRANCHES: ${MAX_BRANCHES:-50}
+      DATABASE_URL: postgresql://investigator:investigator@postgres:5432/investigator
     volumes:
       - workspaces:/workspaces:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -71,8 +77,6 @@ services:
     build:
       context: .
       dockerfile: mcp-servers/analysis-mcp/Dockerfile
-    ports:
-      - "8002:8002"
     environment:
       WORKSPACE_ROOT: /workspaces
       HOST: 0.0.0.0
@@ -88,8 +92,12 @@ services:
       RESOURCE_MAX_CHARS: ${RESOURCE_MAX_CHARS:-8000}
       DEFAULT_PAGE_SIZE: ${DEFAULT_PAGE_SIZE:-20}
       MAX_PAGE_SIZE: ${MAX_PAGE_SIZE:-50}
+      DATABASE_URL: postgresql://investigator:investigator@postgres:5432/investigator
     volumes:
       - workspaces:/workspaces
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -107,8 +115,6 @@ services:
     build:
       context: .
       dockerfile: agent/Dockerfile
-    ports:
-      - "8003:8003"
     environment:
       HOST: 0.0.0.0
       PORT: "8003"
@@ -122,6 +128,7 @@ services:
       MAX_TOOL_OUTPUT_CHARS: ${MAX_TOOL_OUTPUT_CHARS:-4000}
       AGENT_TIMEOUT_SECONDS: ${AGENT_TIMEOUT_SECONDS:-60}
       MAX_RETRIES: ${MAX_RETRIES:-2}
+      AGENT_TEST_MODEL: ${AGENT_TEST_MODEL:-}
     depends_on:
       repository-mcp:
         condition: service_healthy
@@ -141,6 +148,101 @@ services:
       timeout: 3s
       retries: 12
       start_period: 15s
+
+  postgres:
+    image: postgres:16.6-bookworm
+    environment:
+      POSTGRES_USER: investigator
+      POSTGRES_PASSWORD: investigator
+      POSTGRES_DB: investigator
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U investigator -d investigator"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  redis:
+    image: redis:7.4-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    ports:
+      - "8004:8004"
+    environment:
+      HOST: 0.0.0.0
+      PORT: "8004"
+      DATABASE_URL: postgresql://investigator:investigator@postgres:5432/investigator
+      REDIS_URL: redis://redis:6379/0
+      WORKSPACE_ROOT: /workspaces
+      REPOSITORY_MCP_URL: http://repository-mcp:8000/mcp
+      GIT_MCP_URL: http://git-mcp:8001/mcp
+      ANALYSIS_MCP_URL: http://analysis-mcp:8002/mcp
+      AGENT_URL: http://agent:8003
+      IMPORTS_PER_MINUTE: ${IMPORTS_PER_MINUTE:-10}
+      ANALYSES_PER_MINUTE: ${ANALYSES_PER_MINUTE:-5}
+      WORKSPACE_TTL_SECONDS: ${WORKSPACE_TTL_SECONDS:-604800}
+      CACHE_TTL_SECONDS: ${CACHE_TTL_SECONDS:-3600}
+      MAX_FILE_ROWS: ${MAX_FILE_ROWS:-2000}
+      ALICE_TOKEN: ${ALICE_TOKEN:-alice-local-token}
+      BOB_TOKEN: ${BOB_TOKEN:-bob-local-token}
+      MAX_CONCURRENT_IMPORTS: ${MAX_CONCURRENT_IMPORTS:-2}
+      MAX_ANALYSIS_JOBS: ${MAX_ANALYSIS_JOBS:-3}
+      MAX_BODY_BYTES: ${MAX_BODY_BYTES:-1000000}
+    volumes:
+      - workspaces:/workspaces
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      repository-mcp:
+        condition: service_healthy
+      git-mcp:
+        condition: service_healthy
+      analysis-mcp:
+        condition: service_healthy
+      agent:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8004/health')",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: apps/frontend/Dockerfile
+      target: runtime
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:3000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
 
   tests:
     profiles: ["test"]
@@ -193,12 +295,62 @@ services:
         condition: service_healthy
       agent:
         condition: service_healthy
+      api:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
     environment:
       SMOKE_BASE_URL: http://repository-mcp:8000
       GIT_SMOKE_BASE_URL: http://git-mcp:8001
       ANALYSIS_SMOKE_BASE_URL: http://analysis-mcp:8002
       AGENT_SMOKE_BASE_URL: http://agent:8003
+      API_SMOKE_BASE_URL: http://api:8004
+      FRONTEND_SMOKE_BASE_URL: http://frontend:3000
     command: ["pytest", "-q", "tests/smoke"]
+
+  api-tests:
+    profiles: ["test-api"]
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      API_BASE_URL: http://api:8004
+      DATABASE_URL: postgresql://investigator:investigator@postgres:5432/investigator
+      REDIS_URL: redis://redis:6379/0
+      WORKSPACE_ROOT: /workspaces
+      FIXTURE_SOURCE: /opt/fixtures/service_app
+      FIXTURE_DEST: /fixtures/service_app
+      INJECTION_SOURCE: /opt/fixtures/injection_repo
+      INJECTION_DEST: /fixtures/injection_repo
+      ALICE_TOKEN: ${ALICE_TOKEN:-alice-local-token}
+      BOB_TOKEN: ${BOB_TOKEN:-bob-local-token}
+    volumes:
+      - workspaces:/workspaces
+      - fixture-src:/fixtures
+    depends_on:
+      api:
+        condition: service_healthy
+    command: ["pytest", "-q"]
+
+  frontend-tests:
+    profiles: ["test-frontend"]
+    build:
+      context: .
+      dockerfile: apps/frontend/Dockerfile
+      target: test
+    environment:
+      FRONTEND_BASE_URL: http://frontend:3000
+      ALICE_TOKEN: ${ALICE_TOKEN:-alice-local-token}
+      FIXTURE_SOURCE: /opt/fixtures/service_app
+      FIXTURE_DEST: /fixtures/service_app
+    volumes:
+      - fixture-src:/fixtures
+    depends_on:
+      frontend:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    command: ["npx", "playwright", "test"]
 
   mcp-inspector:
     profiles: ["inspect"]
@@ -212,3 +364,5 @@ services:
 
 volumes:
   workspaces:
+  postgres-data:
+  fixture-src:

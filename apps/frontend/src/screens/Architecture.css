@@ -1,0 +1,40 @@
+.graph-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+svg {
+  background: white;
+  border: 1px solid #e7e5e4;
+  max-width: 100%;
+}
+
+line {
+  stroke: #78716c;
+}
+
+rect {
+  fill: #eff6ff;
+  stroke: #1d4e89;
+  cursor: pointer;
+}
+
+text {
+  font-size: 13px;
+  fill: #1c1917;
+}
+
+.detail {
+  background: white;
+  border: 1px solid #e7e5e4;
+  padding: 12px;
+  min-width: 200px;
+}
+
+@media (max-width: 720px) {
+  .graph-wrap {
+    display: block;
+  }
+}

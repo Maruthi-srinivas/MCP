@@ -9,7 +9,7 @@ from langgraph.graph import END, StateGraph
 
 from agent_app.config import Settings
 from agent_app.evidence import absorb, claims_from_model, known_files
-from agent_app.trace import argument_summary, remember
+from agent_app.trace import argument_hash, argument_summary, remember
 
 
 class LoopState(TypedDict, total=False):
@@ -85,6 +85,7 @@ def build_graph(hub, model, settings: Settings):
                     "status": _status(result),
                     "duration_ms": duration_ms,
                     "arguments": argument_summary(call.get("arguments") or {}),
+                    "argument_hash": argument_hash(call.get("arguments") or {}),
                 }
             )
         remember(trace[-len(pending) :], settings.max_steps)

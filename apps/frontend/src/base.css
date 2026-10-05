@@ -1,0 +1,58 @@
+body {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  color: #1c1917;
+  background: #faf7f2;
+}
+
+a {
+  color: #1d4e89;
+}
+
+main {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+
+nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  background: #1d4e89;
+  color: white;
+  border: 0;
+  border-radius: 4px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+input {
+  border: 1px solid #d6d3d1;
+  border-radius: 4px;
+  padding: 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.error {
+  color: #9f1239;
+}
+
+.loading {
+  color: #57534e;
+}

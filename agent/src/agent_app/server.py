@@ -12,7 +12,7 @@ from agent_app.config import get_settings, model_ready
 from agent_app.graph import run_investigation
 from agent_app.mcp_client import HttpMcpHub
 from agent_app.prompts import load_prompt
-from agent_app.trace import argument_summary, remember
+from agent_app.trace import argument_hash, argument_summary, remember
 
 
 async def health(_: Request) -> JSONResponse:
@@ -67,6 +67,7 @@ async def investigate(body: dict, hub=None, model=None, settings=None) -> dict:
                 "status": "ok" if isinstance(cloned, dict) and "error" not in cloned else "error",
                 "duration_ms": duration_ms,
                 "arguments": argument_summary(arguments),
+                "argument_hash": argument_hash(arguments),
             }
         )
         remember(trace, settings.max_steps)

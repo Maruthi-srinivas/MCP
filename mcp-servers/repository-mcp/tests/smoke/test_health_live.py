@@ -22,6 +22,12 @@ def test_live_health():
     agent_url = os.environ.get("AGENT_SMOKE_BASE_URL", "").strip()
     if agent_url:
         _check(agent_url)
+    api_url = os.environ.get("API_SMOKE_BASE_URL", "").strip()
+    if api_url:
+        _check(api_url)
+    frontend_url = os.environ.get("FRONTEND_SMOKE_BASE_URL", "").strip()
+    if frontend_url:
+        _check(frontend_url)
 
 
 def _check(base_url: str) -> None:

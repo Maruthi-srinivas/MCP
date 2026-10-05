@@ -225,3 +225,32 @@ def test_trace_api_prompt_runs_the_five_tools():
         "detect_database_access",
     ]
     assert result["stopped_reason"] == "answered"
+
+
+def test_injection_file_is_content_and_there_is_no_shell():
+    hub = FakeMcp()
+    names = {item["name"] for item in asyncio.run(hub.list_tools())}
+    assert "shell" not in names
+    result = asyncio.run(
+        investigate(
+            {"repository_id": "repo_service", "question": "Read notes.txt"},
+            hub=hub,
+            model=ScriptedModel(),
+            settings=_settings(),
+        )
+    )
+    assert [step["tool"] for step in result["trace"]] == ["read_file"]
+    assert "content" in result["answer"].lower()
+    assert result["trace"][0]["argument_hash"]
+
+
+def test_tool_cap_stops_the_loop():
+    result = asyncio.run(
+        investigate(
+            {"repository_id": "repo_service", "question": ROUTE_QUESTION},
+            hub=FakeMcp(),
+            model=ScriptedModel(),
+            settings=_settings(max_tool_calls=1),
+        )
+    )
+    assert result["stopped_reason"] == "max_tool_calls"

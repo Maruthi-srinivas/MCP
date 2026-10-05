@@ -8,10 +8,13 @@ import logging
 
 import uvicorn
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
+
+from investigator_shared.secrets import install_redacting_logs
 
 from repository_mcp.config import get_settings
 from repository_mcp.prompts import register as register_prompts
@@ -28,6 +31,23 @@ from repository_mcp.tools.read_file import read_file
 from repository_mcp.tools.search_code import search_code
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
+install_redacting_logs()
+
+
+def _transport_security() -> TransportSecuritySettings:
+    """Allow Compose service names. Localhost stays allowed for the health check path."""
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=["127.0.0.1:*", "localhost:*", "repository-mcp:*", "git-mcp:*", "analysis-mcp:*"],
+        allowed_origins=[
+            "http://127.0.0.1:*",
+            "http://localhost:*",
+            "http://repository-mcp:*",
+            "http://git-mcp:*",
+            "http://analysis-mcp:*",
+        ],
+    )
+
 
 mcp = FastMCP(
     "repository-mcp",
@@ -38,6 +58,8 @@ mcp = FastMCP(
     ),
     stateless_http=True,
     json_response=True,
+    host="0.0.0.0",
+    transport_security=_transport_security(),
 )
 
 mcp.tool()(clone_repository)

@@ -1,5 +1,6 @@
-"""Remove obvious secrets from text that a resource returns."""
+"""Remove obvious secrets from text that a resource or a log line returns."""
 
+import logging
 import re
 
 _ASSIGNMENT = re.compile(
@@ -20,3 +21,16 @@ def redact(text: str) -> str:
         return f"{match.group(1)}{match.group(2)} = [redacted]"
 
     return _ASSIGNMENT.sub(_hide, without_keys)
+
+
+class RedactingFilter(logging.Filter):
+    """Run log messages through the same redaction as file text."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str):
+            record.msg = redact(record.msg)
+        return True
+
+
+def install_redacting_logs() -> None:
+    logging.getLogger().addFilter(RedactingFilter())
